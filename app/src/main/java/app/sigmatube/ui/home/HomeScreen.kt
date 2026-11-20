@@ -1,0 +1,244 @@
+package app.sigmatube.ui.home
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.ui.res.painterResource
+import app.sigmatube.R
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import app.sigmatube.data.FeedCategory
+import app.sigmatube.data.VideoItem
+import app.sigmatube.data.YouTubeRepository
+import app.sigmatube.data.auth.AccountManager
+import app.sigmatube.data.auth.InnerTubeClient
+import app.sigmatube.ui.components.ErrorState
+import app.sigmatube.ui.components.ListFooterLoader
+import app.sigmatube.ui.components.LoadMoreEffect
+import app.sigmatube.ui.components.LoadingState
+import app.sigmatube.ui.components.VideoCard
+import app.sigmatube.ui.theme.Accent
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.schabi.newpipe.extractor.Page
+
+/** null = "Tout". */
+data class HomeUiState(
+    val categories: List<FeedCategory> = emptyList(),
+    val selected: String? = null,
+    val videos: List<VideoItem> = emptyList(),
+    val nextPage: Page? = null,
+    val isLoading: Boolean = true,
+    val isRefreshing: Boolean = false,
+    val isLoadingMore: Boolean = false,
+    val error: Throwable? = null,
+)
+
+class HomeViewModel(
+    private val repository: YouTubeRepository,
+    private val innerTube: InnerTubeClient,
+    private val account: AccountManager,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(HomeUiState())
+    val state: StateFlow<HomeUiState> = _state
+    private var job: Job? = null
+
+    init {
+        viewModelScope.launch {
+            runCatching { repository.categories() }.onSuccess { c -> _state.update { it.copy(categories = c) } }
+        }
+        load()
+        // Sign in / out: refresh the "Tout" feed.
+        viewModelScope.launch {
+            account.cookies.drop(1).distinctUntilChanged().collect { if (_state.value.selected == null) load() }
+        }
+    }
+
+    fun select(category: String?) {
+        if (category == _state.value.selected && _state.value.error == null) return
+        _state.update { it.copy(selected = category) }
+        load()
+    }
+
+    fun refresh() = load(refreshing = true)
+
+    fun load(refreshing: Boolean = false) {
+        val selected = _state.value.selected
+        job?.cancel()
+        _state.update {
+            it.copy(isLoading = !refreshing, isRefreshing = refreshing, error = null, nextPage = null,
+                videos = if (refreshing) it.videos else emptyList())
+        }
+        job = viewModelScope.launch {
+            runCatching {
+                when {
+                    selected != null -> repository.category(selected) to null
+                    account.isLoggedIn -> innerTube.homeFeed().let { it.items.filterNot(VideoItem::isLive) to it.nextPage }
+                    else -> repository.discover() to null
+                }
+            }.onSuccess { (videos, next) ->
+                _state.update { it.copy(videos = videos, nextPage = next, isLoading = false, isRefreshing = false) }
+            }.onFailure { e ->
+                _state.update { it.copy(isLoading = false, isRefreshing = false, error = e) }
+            }
+        }
+    }
+
+    fun loadMore() {
+        val s = _state.value
+        val page = s.nextPage ?: return
+        if (s.isLoading || s.isLoadingMore || s.selected != null) return
+        _state.update { it.copy(isLoadingMore = true) }
+        job = viewModelScope.launch {
+            val result = runCatching { innerTube.homeFeed(page) }.getOrNull()
+            _state.update {
+                it.copy(
+                    videos = (it.videos + result?.items.orEmpty().filterNot(VideoItem::isLive)).distinctBy { v -> v.url },
+                    nextPage = result?.nextPage,
+                    isLoadingMore = false,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    viewModel: HomeViewModel,
+    onVideoClick: (VideoItem) -> Unit,
+    onChannelClick: (String) -> Unit,
+    onSearchClick: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+
+    Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        topBar = {
+            TopAppBar(
+                title = { Wordmark() },
+                actions = {
+                    IconButton(onClick = onSearchClick) { Icon(Icons.Outlined.Search, "Rechercher", Modifier.size(26.dp)) }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background,
+                ),
+                scrollBehavior = scrollBehavior,
+            )
+        },
+    ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = viewModel::refresh,
+            modifier = Modifier.padding(padding).fillMaxSize(),
+        ) {
+            val listState = rememberLazyListState()
+            LoadMoreEffect(listState, onLoadMore = viewModel::loadMore)
+            LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                item(key = "chips") {
+                    CategoryChips(state.categories, state.selected, viewModel::select)
+                }
+                when {
+                    state.isLoading -> item(key = "loading") { LoadingState(Modifier.height(400.dp)) }
+                    state.error != null && state.videos.isEmpty() -> item(key = "error") {
+                        ErrorState(state.error!!, onRetry = { viewModel.load() }, modifier = Modifier.height(400.dp))
+                    }
+                    else -> {
+                        items(state.videos, key = { it.url }) { video ->
+                            VideoCard(
+                                video = video,
+                                onClick = { onVideoClick(video) },
+                                onChannelClick = video.channelUrl?.let { url -> { onChannelClick(url) } },
+                            )
+                        }
+                        if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryChips(categories: List<FeedCategory>, selected: String?, onSelect: (String?) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item { Chip("Tout", selected == null) { onSelect(null) } }
+        items(categories, key = { it.id }) { c -> Chip(c.label, selected == c.id) { onSelect(c.id) } }
+    }
+}
+
+@Composable
+private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (selected) colors.onPrimary else colors.onSurface,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) colors.primary else colors.surfaceContainerHigh)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+    )
+}
+
+@Composable
+private fun Wordmark() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Image(painterResource(R.drawable.ic_logo), contentDescription = null, modifier = Modifier.size(width = 30.dp, height = 21.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            "SigmaTube",
+            style = MaterialTheme.typography.titleLarge.copy(letterSpacing = (-0.8).sp),
+            fontWeight = FontWeight.Black,
+        )
+    }
+}

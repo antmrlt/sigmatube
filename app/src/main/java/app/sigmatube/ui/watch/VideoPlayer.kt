@@ -1,0 +1,441 @@
+package app.sigmatube.ui.watch
+
+import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import app.sigmatube.ui.theme.Accent
+import app.sigmatube.util.Format
+import kotlinx.coroutines.delay
+
+/** Observable snapshot of the player, refreshed from listener callbacks + a light poll for position. */
+@Stable
+class PlayerUiState(private val player: Player) {
+    var isPlaying by mutableStateOf(player.isPlaying)
+    var isBuffering by mutableStateOf(player.playbackState == Player.STATE_BUFFERING)
+    var isEnded by mutableStateOf(player.playbackState == Player.STATE_ENDED)
+    var error by mutableStateOf<PlaybackException?>(player.playerError)
+    var position by mutableLongStateOf(0L)
+    var duration by mutableLongStateOf(0L)
+    var buffered by mutableLongStateOf(0L)
+
+    fun sync() {
+        isPlaying = player.isPlaying
+        isBuffering = player.playbackState == Player.STATE_BUFFERING
+        isEnded = player.playbackState == Player.STATE_ENDED
+        error = player.playerError
+        position = player.currentPosition
+        duration = player.duration.coerceAtLeast(0)
+        buffered = player.bufferedPosition
+    }
+}
+
+@Composable
+fun rememberPlayerUiState(player: Player): PlayerUiState {
+    val state = remember(player) { PlayerUiState(player) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) = state.sync()
+        }
+        player.addListener(listener)
+        state.sync()
+        onDispose { player.removeListener(listener) }
+    }
+    LaunchedEffect(player, state.isPlaying) {
+        while (true) {
+            state.sync()
+            delay(if (state.isPlaying) 250 else 1000)
+        }
+    }
+    return state
+}
+
+private const val SEEK_MS = 10_000L
+
+@OptIn(UnstableApi::class)
+@Composable
+fun VideoPlayer(
+    player: Player,
+    ui: PlayerUiState,
+    title: String?,
+    isFullscreen: Boolean,
+    interactive: Boolean,
+    onToggleFullscreen: () -> Unit,
+    onMinimize: () -> Unit,
+    onSettings: () -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var controlsVisible by remember { mutableStateOf(true) }
+    var interactionTick by remember { mutableLongStateOf(0L) }
+    var scrubFraction by remember { mutableStateOf<Float?>(null) }
+    // Double-tap feedback: -1 = rewind, +1 = forward, 0 = none.
+    var seekFeedback by remember { mutableIntStateOf(0) }
+    var seekFeedbackTick by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(controlsVisible, ui.isPlaying, interactionTick, scrubFraction) {
+        if (controlsVisible && ui.isPlaying && scrubFraction == null) {
+            delay(3_000)
+            controlsVisible = false
+        }
+    }
+    LaunchedEffect(seekFeedbackTick) {
+        if (seekFeedback != 0) {
+            delay(700)
+            seekFeedback = 0
+        }
+    }
+
+    BoxWithConstraints(modifier.background(Color.Black)) {
+        val widthPx = constraints.maxWidth
+
+        AndroidView(
+            factory = { context ->
+                PlayerView(context).apply {
+                    useController = false
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    setKeepContentOnPlayerReset(true)
+                }
+            },
+            update = { it.player = player },
+            onRelease = { it.player = null },
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        // Minimized: just the picture, the mini-player bar handles interaction.
+        if (!interactive) return@BoxWithConstraints
+
+        // Gesture layer: single tap toggles controls, double tap on a side seeks ±10 s.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(player) {
+                    detectTapGestures(
+                        onTap = {
+                            controlsVisible = !controlsVisible
+                            interactionTick++
+                        },
+                        onDoubleTap = { offset ->
+                            val forward = offset.x > widthPx / 2f
+                            if (forward) player.seekForward() else player.seekBack()
+                            seekFeedback = if (forward) 1 else -1
+                            seekFeedbackTick++
+                        },
+                    )
+                },
+        )
+
+        val error = ui.error
+        if (error != null) {
+            PlayerError(error, onRetry, Modifier.align(Alignment.Center))
+            return@BoxWithConstraints
+        }
+
+        if (seekFeedback != 0) {
+            SeekFeedback(
+                forward = seekFeedback > 0,
+                modifier = Modifier
+                    .align(if (seekFeedback > 0) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = 48.dp),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible || !ui.isPlaying,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Controls(
+                player = player,
+                ui = ui,
+                title = title.takeIf { isFullscreen },
+                isFullscreen = isFullscreen,
+                scrubFraction = scrubFraction,
+                onToggleFullscreen = onToggleFullscreen,
+                onMinimize = onMinimize,
+                onSettings = onSettings,
+                onInteraction = { interactionTick++ },
+            )
+        }
+
+        if (ui.isBuffering) {
+            CircularProgressIndicator(
+                color = Color.White,
+                strokeWidth = 3.dp,
+                modifier = Modifier.align(Alignment.Center).size(48.dp),
+            )
+        }
+
+        // Portrait: thin line always on the bottom edge (thumb only with controls).
+        // Fullscreen: hidden together with the controls, like YouTube.
+        val showBar = !isFullscreen || controlsVisible || !ui.isPlaying || scrubFraction != null
+        if (showBar) SeekBar(
+            ui = ui,
+            showThumb = controlsVisible || !ui.isPlaying || scrubFraction != null,
+            scrubFraction = scrubFraction,
+            onScrub = {
+                scrubFraction = it
+                controlsVisible = true
+            },
+            onScrubEnd = {
+                scrubFraction?.let { f -> player.seekTo((f * ui.duration).toLong()) }
+                scrubFraction = null
+                interactionTick++
+            },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = if (isFullscreen) 24.dp else 0.dp, vertical = if (isFullscreen) 24.dp else 0.dp),
+        )
+    }
+}
+
+@Composable
+private fun Controls(
+    player: Player,
+    ui: PlayerUiState,
+    title: String?,
+    isFullscreen: Boolean,
+    scrubFraction: Float?,
+    onToggleFullscreen: () -> Unit,
+    onMinimize: () -> Unit,
+    onSettings: () -> Unit,
+    onInteraction: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+        Row(
+            Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .padding(horizontal = if (isFullscreen) 16.dp else 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = if (isFullscreen) onToggleFullscreen else onMinimize) {
+                Icon(Icons.Rounded.KeyboardArrowDown, "Réduire", tint = Color.White, modifier = Modifier.size(30.dp))
+            }
+            Text(
+                title.orEmpty(),
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { onSettings(); onInteraction() }) {
+                Icon(Icons.Outlined.Settings, "Paramètres", tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+        }
+
+        Row(
+            Modifier.align(Alignment.Center),
+            horizontalArrangement = Arrangement.spacedBy(if (isFullscreen) 64.dp else 40.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RoundIcon(Icons.Rounded.Replay10, "Reculer de 10 s", 52.dp) {
+                player.seekBack(); onInteraction()
+            }
+            if (ui.isBuffering) {
+                Box(Modifier.size(64.dp))
+            } else {
+                val (icon, label) = when {
+                    ui.isEnded -> Icons.Rounded.Replay to "Revoir"
+                    ui.isPlaying -> Icons.Rounded.Pause to "Pause"
+                    else -> Icons.Rounded.PlayArrow to "Lecture"
+                }
+                RoundIcon(icon, label, 64.dp) {
+                    when {
+                        ui.isEnded -> player.seekTo(0)
+                        ui.isPlaying -> player.pause()
+                        else -> player.play()
+                    }
+                    onInteraction()
+                }
+            }
+            RoundIcon(Icons.Rounded.Forward10, "Avancer de 10 s", 52.dp) {
+                player.seekForward(); onInteraction()
+            }
+        }
+
+        Row(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(
+                    start = if (isFullscreen) 32.dp else 16.dp,
+                    end = if (isFullscreen) 24.dp else 4.dp,
+                    bottom = if (isFullscreen) 40.dp else 8.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val shown = scrubFraction?.let { (it * ui.duration).toLong() } ?: ui.position
+            Text(
+                "${Format.position(shown)} / ${Format.position(ui.duration)}",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onToggleFullscreen) {
+                Icon(
+                    if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                    if (isFullscreen) "Quitter le plein écran" else "Plein écran",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeekBar(
+    ui: PlayerUiState,
+    showThumb: Boolean,
+    scrubFraction: Float?,
+    onScrub: (Float) -> Unit,
+    onScrubEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    BoxWithConstraints(
+        modifier
+            .fillMaxWidth()
+            .height(20.dp)
+            .offset(y = 9.dp) // centre the 3dp line on the player's bottom edge, like YouTube
+            .pointerInput(ui.duration) {
+                if (ui.duration <= 0) return@pointerInput
+                detectHorizontalDragGestures(
+                    onDragStart = { onScrub((it.x / size.width).coerceIn(0f, 1f)) },
+                    onHorizontalDrag = { change, _ -> onScrub((change.position.x / size.width).coerceIn(0f, 1f)) },
+                    onDragEnd = onScrubEnd,
+                    onDragCancel = onScrubEnd,
+                )
+            }
+            .pointerInput(ui.duration) {
+                if (ui.duration <= 0) return@pointerInput
+                detectTapGestures { onScrub((it.x / size.width).coerceIn(0f, 1f)); onScrubEnd() }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        val duration = ui.duration.coerceAtLeast(1)
+        val played = scrubFraction ?: (ui.position.toFloat() / duration).coerceIn(0f, 1f)
+        val buffered = (ui.buffered.toFloat() / duration).coerceIn(0f, 1f)
+        val barHeight = if (scrubFraction != null) 5.dp else 3.dp
+
+        Box(Modifier.fillMaxWidth().height(barHeight).background(Color.White.copy(alpha = 0.3f)))
+        Box(Modifier.fillMaxWidth(buffered).height(barHeight).background(Color.White.copy(alpha = 0.5f)))
+        Box(Modifier.fillMaxWidth(played).height(barHeight).background(Accent))
+        if (showThumb) {
+            val thumb = if (scrubFraction != null) 16.dp else 12.dp
+            val x = with(density) { (constraints.maxWidth * played).toDp() } - thumb / 2
+            Box(Modifier.offset(x = x).size(thumb).background(Accent, CircleShape))
+        }
+    }
+}
+
+@Composable
+private fun RoundIcon(icon: ImageVector, label: String, size: Dp, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(size)
+            .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+            .clickable(onClick = onClick, interactionSource = remember { MutableInteractionSource() }, indication = null),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, label, tint = Color.White, modifier = Modifier.size(size * 0.62f))
+    }
+}
+
+@Composable
+private fun SeekFeedback(forward: Boolean, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(if (forward) Icons.Rounded.FastForward else Icons.Rounded.FastRewind, null, tint = Color.White)
+        Text("${SEEK_MS / 1000} s", color = Color.White, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun PlayerError(error: PlaybackException, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Lecture impossible", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text(
+            error.errorCodeName,
+            color = Color.White.copy(alpha = 0.6f),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+        androidx.compose.material3.Button(
+            onClick = onRetry,
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = Color.Black,
+            ),
+        ) { Text("Réessayer") }
+    }
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon variant (Android 13+): the Σ alone, tinted by the system. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38.57,36 L69.43,36 L69.43,42.43 L48.34,42.43 L59.14,54 L48.34,65.57 L69.43,65.57 L69.43,72 L38.57,72 L38.57,66.86 L50.91,54 L38.57,41.14 Z" />
+</vector>

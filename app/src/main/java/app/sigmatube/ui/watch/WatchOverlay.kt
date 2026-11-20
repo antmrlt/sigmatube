@@ -1,0 +1,517 @@
+package app.sigmatube.ui.watch
+
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.sigmatube.data.VideoItem
+import app.sigmatube.ui.components.Thumbnail
+import app.sigmatube.ui.components.userMessage
+import app.sigmatube.ui.theme.Accent
+import coil3.compose.AsyncImage
+import kotlinx.coroutines.launch
+
+/** 0 = expanded (full page), 1 = minimized (mini-player bar). */
+@Stable
+class WatchSheetState {
+    var progress by mutableFloatStateOf(0f)
+        internal set
+
+    val isMinimized: Boolean get() = progress >= 0.999f
+
+    suspend fun expand() = animateTo(0f)
+    suspend fun minimize() = animateTo(1f)
+
+    suspend fun animateTo(target: Float, velocity: Float = 0f) {
+        animate(progress, target, velocity, spring(stiffness = Spring.StiffnessMediumLow)) { v, _ -> progress = v }
+    }
+}
+
+private enum class Corner { TopStart, TopEnd, BottomStart, BottomEnd }
+
+private val MiniMaxWidth = 220.dp
+private val MiniMargin = 12.dp
+
+@Composable
+fun WatchOverlay(
+    viewModel: WatchViewModel,
+    sheet: WatchSheetState,
+    /** Space to keep clear at the bottom for the floating player (bottom nav bar, or system nav bar). */
+    bottomInset: Dp,
+    onOpenVideo: (String) -> Unit,
+    onChannelClick: (String) -> Unit,
+    onLoginRequired: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    LaunchedEffect(state.message) {
+        state.message?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.consumeMessage()
+        }
+    }
+    val activity = LocalActivity.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val ui = rememberPlayerUiState(viewModel.player)
+    val details = state.details
+
+    var panel by remember { mutableStateOf(WatchPanel.None) }
+    var showSettings by remember { mutableStateOf(false) }
+    var showRecommendations by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+
+    // Floating mini-player: which corner it rests in, and the live drag offset from that corner.
+    var corner by remember { mutableStateOf(Corner.BottomEnd) }
+    val floatOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+
+    // A new video: back to the top, panels closed.
+    LaunchedEffect(state.url) {
+        panel = WatchPanel.None
+        showRecommendations = false
+        floatOffset.snapTo(Offset.Zero)
+        listState.scrollToItem(0)
+    }
+    LaunchedEffect(isLandscape) {
+        if (isLandscape) sheet.progress = 0f else showRecommendations = false
+    }
+    // No background playback yet.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.pause() }
+
+    fun setFullscreen(on: Boolean) {
+        activity?.requestedOrientation = if (on) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+        }
+    }
+    fun minimize() = scope.launch { panel = WatchPanel.None; sheet.minimize() }
+    fun close() {
+        viewModel.close()
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
+
+    SystemBarsEffect(darkStatusBar = sheet.progress < 0.5f, immersive = isLandscape)
+
+    BackHandler(enabled = !sheet.isMinimized) {
+        when {
+            showRecommendations -> showRecommendations = false
+            isLandscape -> setFullscreen(false)
+            panel != WatchPanel.None -> panel = WatchPanel.None
+            else -> minimize()
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val w = constraints.maxWidth.toFloat()
+        val h = constraints.maxHeight.toFloat()
+        val statusTop = with(density) { WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx() }
+        val margin = with(density) { MiniMargin.toPx() }
+        val bottomPx = with(density) { bottomInset.toPx() }
+        val thresholdPx = with(density) { 72.dp.toPx() }
+        val p = sheet.progress
+
+        // Geometry: expanded video rect -> floating rect in the current corner.
+        val expandedH = w * 9f / 16f
+        val miniW = minOf(w * 0.5f, with(density) { MiniMaxWidth.toPx() })
+        val miniH = miniW * 9f / 16f
+        fun cornerPos(c: Corner) = Offset(
+            x = if (c == Corner.TopEnd || c == Corner.BottomEnd) w - miniW - margin else margin,
+            y = if (c == Corner.BottomStart || c == Corner.BottomEnd) h - bottomPx - miniH - margin else statusTop + margin,
+        )
+        val target = cornerPos(corner) + floatOffset.value
+        val travelPx = (target.y - statusTop).coerceAtLeast(1f)
+
+        var upDrag by remember { mutableFloatStateOf(0f) }
+        val dragState = rememberDraggableState { delta ->
+            when {
+                isLandscape -> upDrag += delta
+                sheet.progress <= 0f && delta < 0 || upDrag < 0 -> upDrag = (upDrag + delta).coerceAtMost(0f)
+                else -> sheet.progress = (sheet.progress + delta / travelPx).coerceIn(0f, 1f)
+            }
+        }
+        // Vertical swipes on the expanded / fullscreen player.
+        val expandedDrag = Modifier.draggable(
+            state = dragState,
+            orientation = Orientation.Vertical,
+            onDragStarted = { panel = WatchPanel.None },
+            onDragStopped = { velocity ->
+                when {
+                    isLandscape -> {
+                        if (upDrag < -thresholdPx) showRecommendations = true
+                        else if (upDrag > thresholdPx) {
+                            if (showRecommendations) showRecommendations = false else setFullscreen(false)
+                        }
+                    }
+                    upDrag < 0 -> if (upDrag < -thresholdPx) setFullscreen(true)
+                    else -> {
+                        val to = when {
+                            velocity > 1500f -> 1f
+                            velocity < -1500f -> 0f
+                            else -> if (sheet.progress > 0.4f) 1f else 0f
+                        }
+                        sheet.animateTo(to, velocity / travelPx)
+                    }
+                }
+                upDrag = 0f
+            },
+        )
+
+        if (isLandscape) {
+            Box(Modifier.fillMaxSize().background(Color.Black).then(expandedDrag)) {
+                PlayerSlot(viewModel, state, ui, interactive = true, isFullscreen = true,
+                    onToggleFullscreen = { setFullscreen(false) }, onMinimize = { setFullscreen(false) },
+                    onSettings = { showSettings = true }, modifier = Modifier.fillMaxSize())
+                FullscreenRecommendations(
+                    visible = showRecommendations,
+                    videos = details?.related.orEmpty(),
+                    onClick = { showRecommendations = false; onOpenVideo(it.url) },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+            return@BoxWithConstraints
+        }
+
+        // The watch page behind the video: fades and slides away as the video shrinks.
+        if (p < 0.999f) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = (1f - p * 1.4f).coerceIn(0f, 1f)
+                        translationY = p * h * 0.25f
+                    }
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
+                Spacer(Modifier.fillMaxWidth().height(with(density) { (statusTop + expandedH).toDp() }).background(Color.Black))
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        details != null -> WatchContent(
+                            details = details,
+                            comments = state.comments,
+                            panel = panel,
+                            listState = listState,
+                            onPanelChange = { panel = it },
+                            onLoadMoreComments = viewModel::loadMoreComments,
+                            onVideoClick = { onOpenVideo(it.url) },
+                            onChannelClick = { url -> minimize(); onChannelClick(url) },
+                            likeStatus = state.likeStatus,
+                            likeDelta = state.likeDelta,
+                            onRate = { target ->
+                                if (!viewModel.toggleRating(target)) {
+                                    Toast.makeText(context, "Connecte-toi pour noter les vidéos", Toast.LENGTH_SHORT).show()
+                                    minimize()
+                                    onLoginRequired()
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        state.error != null -> Text(
+                            state.error!!.userMessage(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(24.dp),
+                        )
+                        else -> CircularProgressIndicator(Modifier.align(Alignment.Center), strokeWidth = 3.dp)
+                    }
+                }
+            }
+        }
+
+        // The video itself, interpolated between its expanded slot and the floating corner.
+        val x = lerpF(0f, target.x, p)
+        val y = lerpF(statusTop, target.y, p)
+        val vw = lerpF(w, miniW, p)
+        val vh = lerpF(expandedH, miniH, p)
+        val minimized = sheet.isMinimized
+
+        val floatingGestures = Modifier
+            .pointerInput(corner, w, h, bottomPx) {
+                val tracker = VelocityTracker()
+                // The box moves under the finger, so local positions barely change: track the
+                // accumulated drag instead to get a real fling velocity.
+                var total = Offset.Zero
+                detectDragGestures(
+                    onDragStart = { tracker.resetTracking(); total = Offset.Zero },
+                    onDrag = { change, amount ->
+                        total += amount
+                        tracker.addPosition(change.uptimeMillis, total)
+                        scope.launch { floatOffset.snapTo(floatOffset.value + amount) }
+                    },
+                    onDragEnd = {
+                        val v = tracker.calculateVelocity()
+                        val pos = cornerPos(corner) + floatOffset.value
+                        // Where a fling would carry it.
+                        val projected = pos + Offset(v.x, v.y) * 0.2f
+                        val cx = projected.x + miniW / 2
+                        val cy = projected.y + miniH / 2
+                        scope.launch {
+                            if (cx < 0f || cx > w || cy > h) {
+                                // Thrown off-screen: slide out and close.
+                                val base = cornerPos(corner)
+                                val outX = when {
+                                    cx < 0f -> -miniW - margin - base.x
+                                    cx > w -> w + margin - base.x
+                                    else -> floatOffset.value.x
+                                }
+                                val outY = if (cy > h) h - base.y else floatOffset.value.y
+                                floatOffset.animateTo(Offset(outX, outY), tween(180))
+                                close()
+                            } else {
+                                val newCorner = when {
+                                    cx < w / 2 && cy < h / 2 -> Corner.TopStart
+                                    cy < h / 2 -> Corner.TopEnd
+                                    cx < w / 2 -> Corner.BottomStart
+                                    else -> Corner.BottomEnd
+                                }
+                                floatOffset.snapTo(pos - cornerPos(newCorner))
+                                corner = newCorner
+                                floatOffset.animateTo(Offset.Zero, spring(stiffness = Spring.StiffnessMediumLow))
+                            }
+                        }
+                    },
+                )
+            }
+            .pointerInput(Unit) { detectTapGestures { scope.launch { sheet.expand() } } }
+
+        val radius = lerp(0.dp, 12.dp, p)
+        Box(
+            Modifier
+                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                .size(with(density) { vw.toDp() }, with(density) { vh.toDp() })
+                .shadow(lerp(0.dp, 8.dp, p), RoundedCornerShape(radius))
+                .clip(RoundedCornerShape(radius))
+                .background(Color.Black)
+                .then(if (minimized) floatingGestures else expandedDrag),
+        ) {
+            PlayerSlot(viewModel, state, ui, interactive = p == 0f, isFullscreen = false,
+                onToggleFullscreen = { setFullscreen(true) }, onMinimize = { minimize() },
+                onSettings = { showSettings = true }, modifier = Modifier.fillMaxSize())
+        }
+    }
+
+    if (showSettings && details != null) {
+        PlayerSettingsSheet(
+            qualities = details.streams.qualities,
+            preferredHeight = state.preferredHeight,
+            currentQualityLabel = state.qualityLabel,
+            speed = state.speed,
+            loop = state.loop,
+            onQuality = viewModel::setQuality,
+            onSpeed = viewModel::setSpeed,
+            onLoop = viewModel::setLoop,
+            onDismiss = { showSettings = false },
+        )
+    }
+}
+
+/** The video surface plus loading / error / unplayable fallbacks. */
+@Composable
+private fun PlayerSlot(
+    viewModel: WatchViewModel,
+    state: WatchState,
+    ui: PlayerUiState,
+    interactive: Boolean,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    onMinimize: () -> Unit,
+    onSettings: () -> Unit,
+    modifier: Modifier,
+) {
+    val details = state.details
+    when {
+        details == null -> Box(modifier.background(Color.Black)) {
+            if (state.isLoading) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center).size(36.dp), color = Color.White, strokeWidth = 3.dp)
+            }
+        }
+        !details.isPlayable -> Box(modifier.background(Color.Black)) {
+            AsyncImage(details.thumbnail, null, Modifier.fillMaxSize())
+            if (interactive) {
+                Text(
+                    "Aucun flux lisible pour cette vidéo",
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                        .padding(12.dp),
+                )
+            }
+        }
+        else -> VideoPlayer(
+            player = viewModel.player,
+            ui = ui,
+            title = details.title,
+            isFullscreen = isFullscreen,
+            interactive = interactive,
+            onToggleFullscreen = onToggleFullscreen,
+            onMinimize = onMinimize,
+            onSettings = onSettings,
+            onRetry = viewModel::retry,
+            modifier = modifier,
+        )
+    }
+}
+
+/** Swipe-up shelf of related videos while in fullscreen. */
+@Composable
+private fun FullscreenRecommendations(
+    visible: Boolean,
+    videos: List<VideoItem>,
+    onClick: (VideoItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible && videos.isNotEmpty(),
+        enter = slideInVertically { it } + fadeIn(),
+        exit = slideOutVertically { it } + fadeOut(),
+        modifier = modifier,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))))
+                .padding(top = 32.dp, bottom = 56.dp),
+        ) {
+            Text(
+                "Vidéos suggérées",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(start = 32.dp, bottom = 12.dp),
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 32.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(videos, key = { it.url }) { video ->
+                    Column(Modifier.width(240.dp).clickable { onClick(video) }) {
+                        Thumbnail(video, Modifier.fillMaxWidth(), RoundedCornerShape(8.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            video.title,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            video.channelName.orEmpty(),
+                            color = Color.White.copy(alpha = 0.7f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Light status-bar icons over the black player, immersive mode in landscape. */
+@Composable
+private fun SystemBarsEffect(darkStatusBar: Boolean, immersive: Boolean) {
+    val activity = LocalActivity.current
+    DisposableEffect(activity, darkStatusBar, immersive) {
+        val window = activity?.window ?: return@DisposableEffect onDispose {}
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        val wasLight = controller.isAppearanceLightStatusBars
+        if (darkStatusBar) controller.isAppearanceLightStatusBars = false
+        if (immersive) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            controller.isAppearanceLightStatusBars = wasLight
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}
+
+private fun lerpF(a: Float, b: Float, t: Float) = a + (b - a) * t

@@ -1,0 +1,123 @@
+package app.sigmatube.data
+
+import org.schabi.newpipe.extractor.Page
+import java.time.OffsetDateTime
+
+data class VideoItem(
+    val url: String,
+    val title: String,
+    val thumbnail: String?,
+    val channelName: String?,
+    val channelUrl: String?,
+    val channelAvatar: String?,
+    val durationSeconds: Long,
+    val viewCount: Long,
+    val uploadDate: OffsetDateTime?,
+    val uploadedText: String?,
+    val isLive: Boolean,
+    /** Pre-formatted views ("1,2 M de vues") when only text is available (account feeds). */
+    val viewsText: String? = null,
+)
+
+data class FeedCategory(val id: String, val label: String)
+
+data class VideoDetails(
+    val url: String,
+    val title: String,
+    val description: String,
+    val thumbnail: String?,
+    val channelName: String?,
+    val channelUrl: String?,
+    val channelAvatar: String?,
+    val channelVerified: Boolean,
+    val subscriberCount: Long,
+    val viewCount: Long,
+    val likeCount: Long,
+    val uploadDate: OffsetDateTime?,
+    val uploadedText: String?,
+    val durationSeconds: Long,
+    val isLive: Boolean,
+    val related: List<VideoItem>,
+    val streams: StreamOptions,
+) {
+    val isPlayable: Boolean get() = streams.resolve(null) != PlaybackSource.Unavailable
+}
+
+/** One selectable resolution (video-only stream, merged with the audio track at play time). */
+data class VideoQuality(val height: Int, val fps: Int, val url: String) {
+    val label: String get() = if (fps > 30) "${height}p$fps" else "${height}p"
+}
+
+/** Everything playable for a video; [resolve] turns it into a concrete source for a chosen quality. */
+data class StreamOptions(
+    val qualities: List<VideoQuality>,
+    val audioUrl: String?,
+    val muxed: List<VideoQuality>,
+    val hlsUrl: String?,
+    val dashUrl: String?,
+    val isLive: Boolean,
+) {
+    /** [preferredHeight] null = Auto (best up to 1080p). */
+    fun resolve(preferredHeight: Int?): PlaybackSource {
+        if (isLive) {
+            hlsUrl?.let { return PlaybackSource.Hls(it) }
+            dashUrl?.let { return PlaybackSource.Dash(it) }
+        }
+        if (audioUrl != null && qualities.isNotEmpty()) {
+            val target = preferredHeight ?: AUTO_MAX_HEIGHT
+            val pick = qualities.filter { it.height <= target }
+                .maxWithOrNull(compareBy<VideoQuality> { it.height }.thenBy { if (preferredHeight == null) -it.fps else it.fps })
+                ?: qualities.minBy { it.height }
+            return PlaybackSource.Merged(pick.url, audioUrl, pick.label)
+        }
+        muxed.maxByOrNull { it.height }?.let { return PlaybackSource.Progressive(it.url, it.label) }
+        hlsUrl?.let { return PlaybackSource.Hls(it) }
+        dashUrl?.let { return PlaybackSource.Dash(it) }
+        return PlaybackSource.Unavailable
+    }
+
+    companion object {
+        const val AUTO_MAX_HEIGHT = 720
+    }
+}
+
+data class ChannelDetails(
+    val url: String,
+    val name: String,
+    val avatar: String?,
+    val banner: String?,
+    val subscriberCount: Long,
+    val description: String,
+)
+
+/** What the player needs to start a video, already resolved from the raw stream lists. */
+sealed interface PlaybackSource {
+    /** Separate video-only + audio streams (how YouTube serves anything above 360p). */
+    data class Merged(val videoUrl: String, val audioUrl: String, val label: String) : PlaybackSource
+    data class Progressive(val url: String, val label: String) : PlaybackSource
+    data class Hls(val url: String) : PlaybackSource
+    data class Dash(val url: String) : PlaybackSource
+    data object Unavailable : PlaybackSource
+}
+
+data class Comment(
+    val id: String,
+    val author: String,
+    val authorAvatar: String?,
+    val text: String,
+    val likeCount: Int,
+    val replyCount: Int,
+    val uploadDate: OffsetDateTime?,
+    val uploadedText: String?,
+    val isPinned: Boolean,
+    val isHearted: Boolean,
+)
+
+class CommentsPage(
+    val comments: List<Comment>,
+    val nextPage: Page?,
+    val totalCount: Int,
+    val disabled: Boolean,
+)
+
+class PagedResult<T>(val items: List<T>, val nextPage: Page?)

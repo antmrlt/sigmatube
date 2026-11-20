@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-app logo: red rounded rectangle with a white Σ, geometrically centred. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="30dp"
+    android:height="21dp"
+    android:viewportWidth="40"
+    android:viewportHeight="28">
+    <path
+        android:fillColor="#FF0033"
+        android:pathData="M7,0 H33 A7,7 0 0 1 40,7 V21 A7,7 0 0 1 33,28 H7 A7,7 0 0 1 0,21 V7 A7,7 0 0 1 7,0 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M13.14,6 L26.86,6 L26.86,8.86 L17.49,8.86 L22.29,14 L17.49,19.14 L26.86,19.14 L26.86,22 L13.14,22 L13.14,19.71 L18.63,14 L13.14,8.29 Z" />
+</vector>
