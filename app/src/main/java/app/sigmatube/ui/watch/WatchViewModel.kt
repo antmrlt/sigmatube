@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import app.sigmatube.data.AppSettings
+import app.sigmatube.data.BackgroundMode
 import app.sigmatube.data.HiddenChannels
 import app.sigmatube.data.LocalHistory
 import app.sigmatube.data.VideoDetails
@@ -111,6 +112,18 @@ class WatchViewModel(
     }
 
     init {
+        // App reopened while something kept playing in the background: show it again.
+        playerManager.currentUrl?.let { url ->
+            playerManager.adopt(this)
+            _state.update { it.copy(url = url, isLoading = true) }
+            viewModelScope.launch {
+                runCatching { repository.video(url) }.onSuccess { d ->
+                    _state.update { it.copy(details = d, isLoading = false, qualityLabel = playerManager.currentQualityLabel) }
+                }
+            }
+            loadComments(url)
+            loadLikeStatus(url)
+        }
         player.addListener(autoplayListener)
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { if (!isPlaying) saveProgress() }
@@ -478,13 +491,31 @@ class WatchViewModel(
         isLive = isLive,
     )
 
+    /** Whether the current video may keep playing when the app is in the background. */
+    fun canPlayInBackground(): Boolean {
+        val details = _state.value.details ?: return false
+        return when (settings.state.value.background) {
+            BackgroundMode.Always -> true
+            BackgroundMode.Never -> false
+            BackgroundMode.Music -> details.isMusic
+        }
+    }
+
+    /** App went to the background (or the screen turned off). */
+    fun onAppBackgrounded() {
+        saveProgress()
+        if (!canPlayInBackground()) playerManager.pause(this)
+    }
+
     fun pause() {
         saveProgress()
         playerManager.pause(this)
     }
 
     override fun onCleared() {
+        saveProgress()
         player.removeListener(autoplayListener)
-        playerManager.stop(this)
+        // App closed while music plays in the background: let it continue (the service owns it).
+        if (!(player.playWhenReady && canPlayInBackground())) playerManager.stop(this)
     }
 }

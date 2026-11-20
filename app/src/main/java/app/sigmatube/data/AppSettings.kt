@@ -5,6 +5,12 @@ import android.net.ConnectivityManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
+enum class BackgroundMode(val label: String) {
+    Music("Musique uniquement"),
+    Always("Toujours"),
+    Never("Jamais"),
+}
+
 enum class ThemeMode(val label: String) { System("Thème de l'appareil"), Light("Thème clair"), Dark("Thème sombre") }
 
 /** Quality caps offered in settings; 0 = "Auto" (720p cap). */
@@ -23,6 +29,7 @@ data class Settings(
     val pauseSearchHistory: Boolean = false,
     val autoplay: Boolean = true,
     val captions: Boolean = false,
+    val background: BackgroundMode = BackgroundMode.Music,
 )
 
 /** User preferences, persisted in SharedPreferences and observable from the UI. */
@@ -43,6 +50,7 @@ class AppSettings(private val context: Context) {
         pauseSearchHistory = prefs.getBoolean("pauseSearchHistory", false),
         autoplay = prefs.getBoolean("autoplay", true),
         captions = prefs.getBoolean("captions", false),
+        background = runCatching { BackgroundMode.valueOf(prefs.getString("background", null) ?: "") }.getOrDefault(BackgroundMode.Music),
     )
 
     fun update(transform: (Settings) -> Settings) {
@@ -58,6 +66,7 @@ class AppSettings(private val context: Context) {
             .putBoolean("pauseSearchHistory", s.pauseSearchHistory)
             .putBoolean("autoplay", s.autoplay)
             .putBoolean("captions", s.captions)
+            .putString("background", s.background.name)
             .apply()
         _state.value = s
     }

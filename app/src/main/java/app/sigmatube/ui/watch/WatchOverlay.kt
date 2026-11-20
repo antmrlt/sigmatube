@@ -216,7 +216,7 @@ fun WatchOverlay(
         if (isLandscape) sheet.progress = 0f else { showRecommendations = false; showSideComments = false }
     }
     // No background playback yet.
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.pause() }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onAppBackgrounded() }
 
     fun setFullscreen(on: Boolean) {
         activity?.requestedOrientation = if (on) {

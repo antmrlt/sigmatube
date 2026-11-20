@@ -42,6 +42,8 @@ data class VideoDetails(
     val related: List<VideoItem>,
     val streams: StreamOptions,
     val subtitles: List<SubtitleTrack> = emptyList(),
+    /** YouTube "Music" category, auto-generated "- Topic" artist channel or VEVO. */
+    val isMusic: Boolean = false,
 ) {
     val isPlayable: Boolean get() = streams.resolve(null) != PlaybackSource.Unavailable
 }

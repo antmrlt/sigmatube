@@ -69,6 +69,7 @@ class PlayerManager(context: Context) {
             /* handleAudioFocus = */ true,
         )
         .setHandleAudioBecomingNoisy(true)
+        .setWakeMode(C.WAKE_MODE_NETWORK)
         .setSeekBackIncrementMs(SEEK_INCREMENT_MS)
         .setSeekForwardIncrementMs(SEEK_INCREMENT_MS)
         .build()
@@ -105,6 +106,11 @@ class PlayerManager(context: Context) {
         player.playWhenReady = true
     }
 
+    /** A new screen/ViewModel takes over the playback that is already running (app reopened). */
+    fun adopt(owner: Any) {
+        this.owner = owner
+    }
+
     fun stop(owner: Any) {
         if (owner !== this.owner) return
         player.stop()
@@ -121,6 +127,7 @@ class PlayerManager(context: Context) {
         val metadata = MediaMetadata.Builder()
             .setTitle(video.title)
             .setArtist(video.channelName)
+            .setArtworkUri(video.thumbnail?.let { android.net.Uri.parse(it) })
             .build()
 
         fun item(uri: String) = MediaItem.Builder()

@@ -58,6 +58,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sigmatube.data.AppSettings
+import app.sigmatube.data.BackgroundMode
+import androidx.compose.material.icons.outlined.Headphones
 import app.sigmatube.data.HiddenChannels
 import app.sigmatube.data.LocalHistory
 import app.sigmatube.data.QUALITY_CHOICES
@@ -128,6 +130,13 @@ fun SettingsScreen(
             item {
                 Entry(Icons.Outlined.Forward10, "Avancer/reculer avec le double appui", "${s.seekSeconds} secondes") {
                     choice = Choice("Double appui", SEEKS, s.seekSeconds, { "$it secondes" }) { v -> settings.update { it.copy(seekSeconds = v) } }
+                }
+            }
+            item {
+                Entry(Icons.Outlined.Headphones, "Lecture en arrière-plan", s.background.label) {
+                    choice = Choice("Continuer la lecture app fermée ou écran éteint", BackgroundMode.entries, s.background, { it.label }) { m ->
+                        settings.update { it.copy(background = m) }
+                    }
                 }
             }
             item {

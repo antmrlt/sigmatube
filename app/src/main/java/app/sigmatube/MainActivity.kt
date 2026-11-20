@@ -2,6 +2,10 @@ package app.sigmatube
 
 import android.content.Intent
 import android.os.Bundle
+import android.content.ComponentName
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import app.sigmatube.player.PlaybackService
 import android.os.SystemClock
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.ComponentActivity
@@ -59,6 +63,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private var controller: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
+
+    override fun onStart() {
+        super.onStart()
+        // Binding a controller lets PlaybackService promote itself to a foreground service
+        // (notification + lock-screen controls) whenever playback continues in the background.
+        controller = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
+    }
+
+    override fun onStop() {
+        controller?.let(MediaController::releaseFuture)
+        controller = null
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
