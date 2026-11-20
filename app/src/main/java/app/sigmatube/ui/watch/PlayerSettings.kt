@@ -67,7 +67,7 @@ fun PlayerSettingsSheet(
         shape = RoundedCornerShape(16.dp),
         containerColor = MaterialTheme.colorScheme.background,
         sheetMaxWidth = 520.dp,
-        modifier = Modifier.padding(horizontal = 12.dp).navigationBarsPadding().padding(bottom = 12.dp),
+        modifier = Modifier.padding(horizontal = 6.dp).navigationBarsPadding().padding(bottom = 6.dp),
     ) {
         Column(Modifier.padding(bottom = 8.dp).verticalScroll(rememberScrollState())) {
             when (page) {
