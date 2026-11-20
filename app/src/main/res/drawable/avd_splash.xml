@@ -16,7 +16,7 @@
                 android:scaleY="0">
                 <path
                     android:fillColor="#FF0033"
-                    android:pathData="M37,35 H71 A10,10 0 0 1 81,45 V63 A10,10 0 0 1 71,73 H37 A10,10 0 0 1 27,63 V45 A10,10 0 0 1 37,35 Z" />
+                    android:pathData="M37,36 C48,35.4 60,35.4 71,36 C76,36.3 79.7,40 80,45 C80.4,51 80.4,57 80,63 C79.7,68 76,71.7 71,72 C60,72.6 48,72.6 37,72 C32,71.7 28.3,68 28,63 C27.6,57 27.6,51 28,45 C28.3,40 32,36.3 37,36 Z" />
                 <group
                     android:name="sigma"
                     android:pivotX="54"
@@ -27,7 +27,7 @@
                         android:name="sigmaPath"
                         android:fillAlpha="0"
                         android:fillColor="#FFFFFF"
-                        android:pathData="M44.57,43 L63.43,43 L63.43,46.93 L50.54,46.93 L57.14,54 L50.54,61.07 L63.43,61.07 L63.43,65 L44.57,65 L44.57,61.86 L52.11,54 L44.57,46.14 Z" />
+                        android:pathData="M46.97,45.80 L61.03,45.80 L61.03,48.73 L51.43,48.73 L56.35,54.00 L51.43,59.27 L61.03,59.27 L61.03,62.20 L46.97,62.20 L46.97,59.85 L52.60,54.00 L46.97,48.15 Z" />
                 </group>
             </group>
         </vector>
