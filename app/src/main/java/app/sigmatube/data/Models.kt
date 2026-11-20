@@ -77,7 +77,7 @@ data class StreamOptions(
     }
 
     companion object {
-        const val AUTO_MAX_HEIGHT = 720
+        const val AUTO_MAX_HEIGHT = 1080
     }
 }
 

@@ -33,9 +33,16 @@ class PlayerManager(context: Context) {
      * googlevideo.com rejects (403) stream requests whose User-Agent doesn't match the client
      * the URL was issued for, so we pick the header per request instead of one global UA.
      */
-    private val dataSourceFactory = ResolvingDataSource.Factory(
-        DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true),
-    ) { spec -> spec.withAdditionalHeaders(headersFor(spec.uri.toString())) }
+    private val httpFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+
+    private val dataSourceFactory = ResolvingDataSource.Factory(httpFactory) { spec ->
+        spec.withAdditionalHeaders(headersFor(spec.uri.toString()))
+    }
+
+    /** Progressive streams: same headers, but fetched in bounded chunks (see [ChunkedDataSource]). */
+    private val progressiveFactory = ResolvingDataSource.Factory(ChunkedDataSource.Factory(httpFactory)) { spec ->
+        spec.withAdditionalHeaders(headersFor(spec.uri.toString()))
+    }
 
     private fun headersFor(url: String): Map<String, String> = when {
         YoutubeParsingHelper.isVisionOsStreamingUrl(url) ->
@@ -117,7 +124,7 @@ class PlayerManager(context: Context) {
             .setMediaMetadata(metadata)
             .build()
 
-        val progressive = ProgressiveMediaSource.Factory(dataSourceFactory)
+        val progressive = ProgressiveMediaSource.Factory(progressiveFactory)
         return when (source) {
             is PlaybackSource.Merged -> MergingMediaSource(
                 /* adjustPeriodTimeOffsets = */ true,

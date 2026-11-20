@@ -24,6 +24,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -147,6 +149,7 @@ fun WatchOverlay(
     var panel by remember { mutableStateOf(WatchPanel.None) }
     var showSettings by remember { mutableStateOf(false) }
     var showRecommendations by remember { mutableStateOf(false) }
+    var showSideComments by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     // Floating mini-player: which corner it rests in, and the live drag offset from that corner.
@@ -161,7 +164,7 @@ fun WatchOverlay(
         listState.scrollToItem(0)
     }
     LaunchedEffect(isLandscape) {
-        if (isLandscape) sheet.progress = 0f else showRecommendations = false
+        if (isLandscape) sheet.progress = 0f else { showRecommendations = false; showSideComments = false }
     }
     // No background playback yet.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.pause() }
@@ -184,6 +187,7 @@ fun WatchOverlay(
     BackHandler(enabled = !sheet.isMinimized) {
         when {
             showRecommendations -> showRecommendations = false
+            showSideComments -> showSideComments = false
             isLandscape -> setFullscreen(false)
             panel != WatchPanel.None -> panel = WatchPanel.None
             else -> minimize()
@@ -246,16 +250,33 @@ fun WatchOverlay(
         )
 
         if (isLandscape) {
-            Box(Modifier.fillMaxSize().background(Color.Black).then(expandedDrag)) {
-                PlayerSlot(viewModel, state, ui, interactive = true, isFullscreen = true,
-                    onToggleFullscreen = { setFullscreen(false) }, onMinimize = { setFullscreen(false) },
-                    onSettings = { showSettings = true }, modifier = Modifier.fillMaxSize())
-                FullscreenRecommendations(
-                    visible = showRecommendations,
-                    videos = details?.related.orEmpty(),
-                    onClick = { showRecommendations = false; onOpenVideo(it.url) },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
+            Row(Modifier.fillMaxSize().background(Color.Black)) {
+                Box(Modifier.weight(1f).fillMaxHeight().then(expandedDrag)) {
+                    PlayerSlot(viewModel, state, ui, interactive = true, isFullscreen = true,
+                        onToggleFullscreen = { setFullscreen(false) }, onMinimize = { setFullscreen(false) },
+                        onSettings = { showSettings = true },
+                        onComments = { showRecommendations = false; showSideComments = !showSideComments },
+                        modifier = Modifier.fillMaxSize())
+                    FullscreenRecommendations(
+                        visible = showRecommendations && !showSideComments,
+                        videos = details?.related.orEmpty(),
+                        onClick = { showRecommendations = false; onOpenVideo(it.url) },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
+                // YouTube-style side panel: the video shrinks to the left, comments on the right.
+                AnimatedVisibility(
+                    visible = showSideComments,
+                    enter = expandHorizontally(expandFrom = Alignment.Start),
+                    exit = shrinkHorizontally(shrinkTowards = Alignment.Start),
+                ) {
+                    SideCommentsPanel(
+                        comments = state.comments,
+                        onLoadMore = viewModel::loadMoreComments,
+                        onClose = { showSideComments = false },
+                        modifier = Modifier.fillMaxHeight().width(with(density) { (w * 0.4f).toDp() }),
+                    )
+                }
             }
             return@BoxWithConstraints
         }
@@ -404,6 +425,7 @@ private fun PlayerSlot(
     onMinimize: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier,
+    onComments: (() -> Unit)? = null,
 ) {
     val details = state.details
     when {
@@ -436,6 +458,7 @@ private fun PlayerSlot(
             onSettings = onSettings,
             onRetry = viewModel::retry,
             modifier = modifier,
+            onComments = onComments,
         )
     }
 }
@@ -515,3 +538,33 @@ private fun SystemBarsEffect(darkStatusBar: Boolean, immersive: Boolean) {
 }
 
 private fun lerpF(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+@Composable
+private fun SideCommentsPanel(
+    comments: CommentsState,
+    onLoadMore: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.background(MaterialTheme.colorScheme.background)) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Commentaires", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+            if (comments.totalCount > 0) {
+                Text(
+                    "  ${app.sigmatube.util.Format.compact(comments.totalCount.toLong())}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Fermer") }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        CommentsList(comments, onLoadMore)
+    }
+}

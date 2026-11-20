@@ -10,7 +10,7 @@ enum class ThemeMode(val label: String) { System("Thème de l'appareil"), Light(
 /** Quality caps offered in settings; 0 = "Auto" (720p cap). */
 val QUALITY_CHOICES = listOf(0, 2160, 1440, 1080, 720, 480, 360, 240, 144)
 
-fun qualityLabel(height: Int) = if (height == 0) "Auto (720p max)" else "${height}p max"
+fun qualityLabel(height: Int) = if (height == 0) "Auto (1080p max)" else "${height}p max"
 
 data class Settings(
     val theme: ThemeMode = ThemeMode.System,

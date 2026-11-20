@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Comment
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Forward10
@@ -129,6 +130,7 @@ fun VideoPlayer(
     onSettings: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    onComments: (() -> Unit)? = null,
 ) {
     val seekMs = LocalSeekMs.current
     var controlsVisible by remember { mutableStateOf(true) }
@@ -221,6 +223,7 @@ fun VideoPlayer(
                 onToggleFullscreen = onToggleFullscreen,
                 onMinimize = onMinimize,
                 onSettings = onSettings,
+                onComments = onComments,
                 onInteraction = { interactionTick++ },
             )
         }
@@ -266,6 +269,7 @@ private fun Controls(
     onToggleFullscreen: () -> Unit,
     onMinimize: () -> Unit,
     onSettings: () -> Unit,
+    onComments: (() -> Unit)?,
     onInteraction: () -> Unit,
 ) {
     val seekMs = LocalSeekMs.current
@@ -341,6 +345,11 @@ private fun Controls(
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.weight(1f),
             )
+            if (isFullscreen && onComments != null) {
+                IconButton(onClick = { onComments(); onInteraction() }) {
+                    Icon(Icons.Outlined.Comment, "Commentaires", tint = Color.White, modifier = Modifier.size(26.dp))
+                }
+            }
             IconButton(onClick = onToggleFullscreen) {
                 Icon(
                     if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,

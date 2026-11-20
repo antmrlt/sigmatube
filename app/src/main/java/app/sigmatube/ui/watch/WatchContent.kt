@@ -393,7 +393,7 @@ private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun CommentsList(state: CommentsState, onLoadMore: () -> Unit) {
+fun CommentsList(state: CommentsState, onLoadMore: () -> Unit) {
     val listState = rememberLazyListState()
     LoadMoreEffect(listState, onLoadMore = onLoadMore)
     if (state.isLoading) {
