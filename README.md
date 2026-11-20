@@ -49,7 +49,7 @@ L'interface que tu connais, sans tout le reste.
 2. Ouvre le fichier sur ton téléphone et autorise l'installation depuis cette source si Android le demande
 3. C'est tout. Les nouvelles versions s'installent par-dessus l'ancienne.
 
-> Chaque push sur `main` produit aussi un APK téléchargeable dans l'onglet [**Actions**](https://github.com/antmrlt/sigmatube/actions) (section *Artifacts* du dernier build).
+> Une nouvelle version est publiée automatiquement à chaque mise à jour du code.
 
 ---
 
@@ -68,12 +68,7 @@ Pour l'installer directement sur un téléphone branché : `./gradlew :app:insta
 
 ### Publier une version
 
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-GitHub Actions compile l'APK et crée la Release automatiquement.
+Chaque push sur `main` déclenche GitHub Actions, qui compile l'APK et publie automatiquement une nouvelle Release (`v0.2.<n>`).
 
 ---
 

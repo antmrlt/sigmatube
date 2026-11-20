@@ -3,12 +3,11 @@ name: Build APK
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write # needed to attach the APK to a GitHub Release
+  contents: write # needed to publish the GitHub Release
 
 jobs:
   build:
@@ -23,10 +22,16 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Every build gets its own version: versionCode grows with each run so a new APK
+      # always installs over the previous one.
+      - name: Compute version
+        run: echo "VERSION=0.2.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Build
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-configuration-cache
+          ./gradlew :app:assembleDebug --no-configuration-cache \
+            -PversionCode=${{ github.run_number }} -PversionName=$VERSION
 
       - name: Rename APK
         run: mv app/build/outputs/apk/debug/app-debug.apk SigmaTube.apk
@@ -37,9 +42,14 @@ jobs:
           name: SigmaTube-apk
           path: SigmaTube.apk
 
+      # One release per push to main (not for pull requests).
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          name: SigmaTube ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           files: SigmaTube.apk
           generate_release_notes: true
+          make_latest: true
