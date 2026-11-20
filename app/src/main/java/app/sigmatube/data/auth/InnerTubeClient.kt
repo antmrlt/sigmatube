@@ -17,6 +17,13 @@ import java.util.Locale
 
 enum class LikeStatus { None, Like, Dislike }
 
+class SubscriptionsFeed(
+    val shelfTitle: String?,
+    val shelf: List<VideoItem>,
+    val videos: List<VideoItem>,
+    val nextPage: Page?,
+)
+
 /**
  * Minimal authenticated client for YouTube's internal "InnerTube" API, used only for what
  * NewPipe can't do: the personalised home feed, the subscriptions feed and account info.
@@ -27,6 +34,9 @@ class InnerTubeClient(
 ) {
 
     suspend fun homeFeed(page: Page? = null): PagedResult<VideoItem> = browse("FEwhat_to_watch", page)
+
+    /** Account playlists: "LL" = liked videos, "WL" = watch later. */
+    suspend fun accountPlaylist(id: String, page: Page? = null): PagedResult<VideoItem> = browse("VL$id", page)
 
     suspend fun subscriptionsFeed(page: Page? = null): PagedResult<VideoItem> = browse("FEsubscriptions", page)
 
@@ -67,24 +77,251 @@ class InnerTubeClient(
     }
 
     private suspend fun browse(browseId: String, page: Page?): PagedResult<VideoItem> = withContext(Dispatchers.IO) {
-        val body = JSONObject()
-        if (page?.id != null) body.put("continuation", page.id) else body.put("browseId", browseId)
-        val json = post("browse", body)
-        val videos = mutableListOf<VideoItem>()
-        var continuation: String? = null
-        walk(json) { key, obj ->
-            when (key) {
-                "videoRenderer", "gridVideoRenderer" -> parseVideoRenderer(obj)?.let(videos::add)
-                "lockupViewModel" -> parseLockup(obj)?.let(videos::add)
-                "continuationCommand" -> obj.optString("token").takeIf { it.isNotEmpty() }?.let { continuation = it }
-            }
-        }
-        PagedResult(videos.distinctBy { it.url }, continuation?.let { Page("browse", it) })
+        val json = browseJson(browseId, page)
+        PagedResult(collectVideos(json), findContinuation(json)?.let { Page("browse", it) })
     }
 
-    private fun post(endpoint: String, body: JSONObject): JSONObject {
-        val cookies = account.cookies.value ?: error("Non connecté")
-        val sapisid = AccountManager.sapisid(cookies) ?: error("Session invalide, reconnecte-toi")
+    /**
+     * Subscriptions with YouTube's "Most relevant" shelf split out (first page only), so it can
+     * be shown as a horizontal row above the chronological feed.
+     */
+    suspend fun subscriptionsWithShelf(page: Page? = null): SubscriptionsFeed = withContext(Dispatchers.IO) {
+        val json = browseJson("FEsubscriptions", page)
+        var shelfTitle: String? = null
+        var shelf = emptyList<VideoItem>()
+        if (page == null) {
+            var found = false
+            walk(json) { key, obj ->
+                if (!found && (key == "richShelfRenderer" || key == "shelfRenderer")) {
+                    val items = collectVideos(obj)
+                    if (items.isNotEmpty()) {
+                        found = true
+                        shelf = items
+                        shelfTitle = obj.optJSONObject("title")?.let(::text)
+                    }
+                }
+            }
+        }
+        val shelfUrls = shelf.map { it.url }.toSet()
+        SubscriptionsFeed(
+            shelfTitle = shelfTitle,
+            shelf = shelf,
+            videos = collectVideos(json).filterNot { it.url in shelfUrls },
+            nextPage = findContinuation(json)?.let { Page("browse", it) },
+        )
+    }
+
+
+    // region Channels
+
+    suspend fun channelPage(channelId: String): ChannelPage = withContext(Dispatchers.IO) {
+        val json = post("browse", JSONObject().put("browseId", channelId), requireAuth = false)
+        val tabs = mutableListOf<ChannelTab>()
+        walk(json) { key, obj ->
+            if (key != "tabRenderer") return@walk
+            val endpoint = obj.optJSONObject("endpoint") ?: return@walk
+            val params = endpoint.optJSONObject("browseEndpoint")?.optString("params").orEmpty()
+            val url = endpoint.optJSONObject("commandMetadata")?.optJSONObject("webCommandMetadata")?.optString("url").orEmpty()
+            val kind = when (url.substringAfterLast('/')) {
+                "featured" -> ChannelTabKind.Home
+                "videos" -> ChannelTabKind.Videos
+                "streams" -> ChannelTabKind.Live
+                "playlists" -> ChannelTabKind.Playlists
+                "posts", "community" -> ChannelTabKind.Posts
+                else -> null
+            }
+            if (kind != null && params.isNotEmpty() && tabs.none { it.kind == kind }) tabs += ChannelTab(kind, params)
+        }
+        ChannelPage(tabs.sortedBy { it.kind.ordinal }, if (account.isLoggedIn) subscribedState(json) else null)
+    }
+
+    private fun subscribedState(json: JSONObject): Boolean? {
+        var subscribed: Boolean? = null
+        walk(json) { key, obj ->
+            if (subscribed != null) return@walk
+            when (key) {
+                "subscriptionStateEntity" -> if (obj.has("subscribed")) subscribed = obj.optBoolean("subscribed")
+                "subscribeButtonRenderer" -> if (obj.has("subscribed")) subscribed = obj.optBoolean("subscribed")
+            }
+        }
+        return subscribed
+    }
+
+    suspend fun setSubscribed(channelId: String, subscribe: Boolean) = withContext(Dispatchers.IO) {
+        val endpoint = if (subscribe) "subscription/subscribe" else "subscription/unsubscribe"
+        post(endpoint, JSONObject().put("channelIds", JSONArray().put(channelId)))
+        Unit
+    }
+
+    /** Videos tab; pass a sort chip token or a continuation page to load more / re-sort. */
+    suspend fun channelVideos(channelId: String, params: String, token: String? = null): ChannelVideosPage =
+        withContext(Dispatchers.IO) {
+            val json = tabJson(channelId, params, token)
+            val sorts = mutableListOf<SortChip>()
+            walk(json) { key, obj ->
+                if (key != "chipViewModel") return@walk
+                val t = findFirst(obj, "continuationCommand")?.optString("token").orEmpty()
+                if (t.isNotEmpty()) sorts += SortChip(obj.optString("text"), t, obj.optBoolean("selected"))
+            }
+            ChannelVideosPage(collectVideos(json), sorts, findContinuation(json)?.let { Page("browse", it) })
+        }
+
+    suspend fun channelVideosSimple(channelId: String, params: String, page: Page? = null): PagedResult<VideoItem> =
+        withContext(Dispatchers.IO) {
+            val json = tabJson(channelId, params, page?.id)
+            PagedResult(collectVideos(json), findContinuation(json)?.let { Page("browse", it) })
+        }
+
+    suspend fun channelPlaylists(channelId: String, params: String, page: Page? = null): PagedResult<PlaylistItem> =
+        withContext(Dispatchers.IO) {
+            val json = tabJson(channelId, params, page?.id)
+            PagedResult(collectPlaylists(json), findContinuation(json)?.let { Page("browse", it) })
+        }
+
+    suspend fun channelPosts(channelId: String, params: String, page: Page? = null): PagedResult<ChannelPost> =
+        withContext(Dispatchers.IO) {
+            val json = tabJson(channelId, params, page?.id)
+            val posts = mutableListOf<ChannelPost>()
+            walk(json) { key, obj -> if (key == "backstagePostRenderer") parsePost(obj)?.let(posts::add) }
+            PagedResult(posts.distinctBy { it.id }, findContinuation(json)?.let { Page("browse", it) })
+        }
+
+    /** "Accueil" tab: the channel's shelves (latest videos, featured playlists…). */
+    suspend fun channelHome(channelId: String, params: String): List<ChannelShelf> = withContext(Dispatchers.IO) {
+        val json = tabJson(channelId, params, null)
+        val shelves = mutableListOf<ChannelShelf>()
+        walk(json) { key, obj ->
+            if (key != "shelfRenderer") return@walk
+            val title = obj.optJSONObject("title")?.let(::text).orEmpty()
+            val videos = collectVideos(obj)
+            val playlists = collectPlaylists(obj)
+            if (title.isNotEmpty() && (videos.isNotEmpty() || playlists.isNotEmpty())) {
+                shelves += ChannelShelf(title, videos, playlists)
+            }
+        }
+        shelves
+    }
+
+    /** The signed-in user's subscriptions, in YouTube's relevance order (from the side guide). */
+    suspend fun subscribedChannels(): List<SubscribedChannel> = withContext(Dispatchers.IO) {
+        val json = post("guide", JSONObject())
+        val section = findFirst(json, "guideSubscriptionsSectionRenderer") ?: return@withContext emptyList()
+        val channels = mutableListOf<SubscribedChannel>()
+        walk(section) { key, obj ->
+            if (key != "guideEntryRenderer") return@walk
+            val id = obj.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
+            if (!id.startsWith("UC")) return@walk
+            channels += SubscribedChannel(
+                id = id,
+                name = obj.optJSONObject("formattedTitle")?.let(::text) ?: obj.optString("title"),
+                avatar = obj.optJSONObject("thumbnail")?.let(::lastThumb),
+                hasNewContent = obj.optString("presentationStyle").contains("NEW_CONTENT"),
+            )
+        }
+        channels.distinctBy { it.id }
+    }
+
+    private fun tabJson(channelId: String, params: String, token: String?): JSONObject {
+        val body = JSONObject()
+        if (token != null) body.put("continuation", token) else body.put("browseId", channelId).put("params", params)
+        return post("browse", body, requireAuth = false)
+    }
+
+    private fun collectPlaylists(node: Any): List<PlaylistItem> {
+        val items = mutableListOf<PlaylistItem>()
+        walk(node) { key, obj ->
+            when (key) {
+                "lockupViewModel" -> parsePlaylistLockup(obj)?.let(items::add)
+                "gridPlaylistRenderer", "playlistRenderer" -> {
+                    val id = obj.optString("playlistId")
+                    if (id.isNotEmpty()) {
+                        items += PlaylistItem(
+                            id = id,
+                            title = obj.optJSONObject("title")?.let(::text).orEmpty(),
+                            thumbnail = findFirst(obj, "thumbnail")?.let(::lastThumb),
+                            countText = obj.optJSONObject("videoCountShortText")?.let(::text)
+                                ?: obj.optJSONObject("videoCountText")?.let(::text),
+                        )
+                    }
+                }
+            }
+        }
+        return items.distinctBy { it.id }
+    }
+
+    private fun parsePlaylistLockup(o: JSONObject): PlaylistItem? {
+        val type = o.optString("contentType")
+        if (type != "LOCKUP_CONTENT_TYPE_PLAYLIST" && type != "LOCKUP_CONTENT_TYPE_PODCAST") return null
+        val id = o.optString("contentId").takeIf { it.isNotEmpty() } ?: return null
+        val image = o.optJSONObject("contentImage")
+        var badge: String? = null
+        walk(image ?: JSONObject()) { key, obj -> if (badge == null && key == "thumbnailBadgeViewModel") badge = obj.optString("text") }
+        return PlaylistItem(
+            id = id,
+            title = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
+                ?.optJSONObject("title")?.optString("content").orEmpty(),
+            thumbnail = image?.let { findFirst(it, "image") }?.optJSONArray("sources")
+                ?.let { it.optJSONObject(it.length() - 1)?.optString("url") },
+            countText = badge,
+        )
+    }
+
+    private fun parsePost(o: JSONObject): ChannelPost? {
+        val id = o.optString("postId").takeIf { it.isNotEmpty() } ?: return null
+        val attachment = o.optJSONObject("backstageAttachment")
+        val images = mutableListOf<String>()
+        var video: VideoItem? = null
+        if (attachment != null) {
+            walk(attachment) { key, obj ->
+                if (key == "backstageImageRenderer") obj.optJSONObject("image")?.let(::lastThumb)?.let(images::add)
+                if (key == "videoRenderer" && video == null) video = parseVideoRenderer(obj)
+            }
+        }
+        return ChannelPost(
+            id = id,
+            author = o.optJSONObject("authorText")?.let(::text),
+            authorAvatar = o.optJSONObject("authorThumbnail")?.let(::lastThumb),
+            text = o.optJSONObject("contentText")?.let(::text).orEmpty(),
+            publishedText = o.optJSONObject("publishedTimeText")?.let(::text),
+            likesText = o.optJSONObject("voteCount")?.let(::text),
+            images = images,
+            video = video,
+        )
+    }
+
+    // endregion
+
+    private fun browseJson(browseId: String, page: Page?): JSONObject {
+        val body = JSONObject()
+        if (page?.id != null) body.put("continuation", page.id) else body.put("browseId", browseId)
+        return post("browse", body)
+    }
+
+    private fun collectVideos(node: Any): List<VideoItem> {
+        val videos = mutableListOf<VideoItem>()
+        walk(node) { key, obj ->
+            when (key) {
+                "videoRenderer", "gridVideoRenderer", "playlistVideoRenderer" -> parseVideoRenderer(obj)?.let(videos::add)
+                "lockupViewModel" -> parseLockup(obj)?.let(videos::add)
+            }
+        }
+        return videos.distinctBy { it.url }
+    }
+
+    private fun findContinuation(node: Any): String? {
+        var token: String? = null
+        walk(node) { key, obj ->
+            if (key == "continuationItemRenderer") {
+                findFirst(obj, "continuationCommand")?.optString("token")?.takeIf { it.isNotEmpty() }?.let { token = it }
+            }
+        }
+        return token
+    }
+
+    private fun post(endpoint: String, body: JSONObject, requireAuth: Boolean = true): JSONObject {
+        val cookies = account.cookies.value
+        val sapisid = cookies?.let(AccountManager::sapisid)
+        if (requireAuth && (cookies == null || sapisid == null)) error("Non connecté")
         val locale = Locale.getDefault()
         body.put(
             "context",
@@ -97,16 +334,18 @@ class InnerTubeClient(
                     .put("gl", locale.country.ifBlank { "US" }),
             ),
         )
-        val request = Request.Builder()
+        val builder = Request.Builder()
             .url("https://www.youtube.com/youtubei/v1/$endpoint?prettyPrint=false")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
-            .header("Cookie", cookies)
-            .header("Authorization", sapisidHash(sapisid))
             .header("X-Origin", ORIGIN)
             .header("Origin", ORIGIN)
-            .header("X-Goog-AuthUser", "0")
             .header("User-Agent", DESKTOP_UA)
-            .build()
+        if (cookies != null && sapisid != null) {
+            builder.header("Cookie", cookies)
+                .header("Authorization", sapisidHash(sapisid))
+                .header("X-Goog-AuthUser", "0")
+        }
+        val request = builder.build()
         http.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (response.code == 401 || response.code == 403) error("Session expirée, reconnecte-toi")
@@ -129,6 +368,9 @@ class InnerTubeClient(
         val owner = o.optJSONObject("ownerText") ?: o.optJSONObject("shortBylineText")
         val channelId = owner?.optJSONArray("runs")?.optJSONObject(0)
             ?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId")
+        val videoInfo = o.optJSONObject("videoInfo")?.optJSONArray("runs")?.let { runs ->
+            (0 until runs.length()).map { runs.optJSONObject(it).optString("text") }.filter { it.isNotBlank() && it.trim() != "•" }
+        }
         val isLive = o.optJSONArray("badges")?.toString()?.contains("LIVE") == true ||
             o.optJSONArray("thumbnailOverlays")?.toString()?.contains("\"LIVE\"") == true
         return VideoItem(
@@ -140,9 +382,10 @@ class InnerTubeClient(
             channelAvatar = findFirst(o, "channelThumbnailWithLinkRenderer")?.optJSONObject("thumbnail")?.let(::lastThumb),
             durationSeconds = o.optJSONObject("lengthText")?.let(::text)?.let(::parseDuration) ?: -1,
             viewCount = -1,
-            viewsText = o.optJSONObject("shortViewCountText")?.let(::text) ?: o.optJSONObject("viewCountText")?.let(::text),
+            viewsText = o.optJSONObject("shortViewCountText")?.let(::text) ?: o.optJSONObject("viewCountText")?.let(::text)
+                ?: videoInfo?.getOrNull(0),
             uploadDate = null,
-            uploadedText = o.optJSONObject("publishedTimeText")?.let(::text),
+            uploadedText = o.optJSONObject("publishedTimeText")?.let(::text) ?: videoInfo?.getOrNull(1),
             isLive = isLive,
         )
     }
@@ -164,14 +407,15 @@ class InnerTubeClient(
         val avatar = findFirst(meta, "avatarViewModel")?.optJSONObject("image")?.optJSONArray("sources")
             ?.optJSONObject(0)?.optString("url")
         val channelId = findFirst(meta, "browseEndpoint")?.optString("browseId")
-        val stats = row(1)
+        val hasChannelRow = (rows?.length() ?: 0) >= 2
+        val stats = if (hasChannelRow) row(1) else row(0)
         val isLive = badges.any { it.contains("DIRECT", true) || it.contains("LIVE", true) }
         return VideoItem(
             url = "https://www.youtube.com/watch?v=$id",
             title = meta.optJSONObject("title")?.optString("content").orEmpty(),
             thumbnail = o.optJSONObject("contentImage")?.let { findFirst(it, "image") }
                 ?.optJSONArray("sources")?.let { it.optJSONObject(it.length() - 1)?.optString("url") },
-            channelName = row(0).firstOrNull(),
+            channelName = if (hasChannelRow) row(0).firstOrNull() else null,
             channelUrl = channelId?.takeIf { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             channelAvatar = avatar,
             durationSeconds = badges.firstNotNullOfOrNull(::parseDuration) ?: -1,

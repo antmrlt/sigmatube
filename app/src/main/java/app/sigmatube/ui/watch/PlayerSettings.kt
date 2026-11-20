@@ -88,7 +88,12 @@ fun PlayerSettingsSheet(
                             Switch(
                                 checked = loop,
                                 onCheckedChange = onLoop,
-                                colors = SwitchDefaults.colors(checkedTrackColor = MaterialTheme.colorScheme.primary),
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
                             )
                         },
                     ) { onLoop(!loop) }

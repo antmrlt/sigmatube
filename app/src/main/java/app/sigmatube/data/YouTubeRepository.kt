@@ -17,6 +17,7 @@ import org.schabi.newpipe.extractor.comments.CommentsInfoItem
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
 import org.schabi.newpipe.extractor.linkhandler.ListLinkHandler
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
 import org.schabi.newpipe.extractor.stream.AudioTrackType
@@ -46,7 +47,7 @@ class YouTubeRepository {
     suspend fun category(id: String): List<VideoItem> = io {
         val extractor = service.kioskList.getExtractorById(id, null)
         extractor.fetchPage()
-        extractor.initialPage.items.toVideoItems().filterNot { it.isLive }
+        extractor.initialPage.items.toVideoItems()
     }
 
     /** "Tout" when signed out: every category interleaved, lives excluded. */
@@ -127,6 +128,7 @@ class YouTubeRepository {
         val info = ChannelInfo.getInfo(service, url)
         info.tabs.firstOrNull { ChannelTabs.VIDEOS in it.contentFilters }?.let { tabCache[url] = it }
         ChannelDetails(
+            id = info.id,
             url = info.url,
             name = info.name,
             avatar = info.avatars.best(),
@@ -145,6 +147,22 @@ class YouTubeRepository {
             val more = ChannelTabInfo.getMoreItems(service, tab, page)
             PagedResult(more.items.toVideoItems(), more.nextPage)
         }
+    }
+
+    suspend fun playlist(url: String): Pair<PlaylistDetails, PagedResult<VideoItem>> = io {
+        val info = PlaylistInfo.getInfo(service, url)
+        PlaylistDetails(
+            url = info.url,
+            title = info.name,
+            uploader = info.uploaderName,
+            thumbnail = info.thumbnails.best(),
+            videoCount = info.streamCount,
+        ) to PagedResult(info.relatedItems.toVideoItems(), info.nextPage)
+    }
+
+    suspend fun playlistMore(url: String, page: Page): PagedResult<VideoItem> = io {
+        val more = PlaylistInfo.getMoreItems(service, url, page)
+        PagedResult(more.items.toVideoItems(), more.nextPage)
     }
 
     private val tabCache = ConcurrentHashMap<String, ListLinkHandler>()

@@ -64,7 +64,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.sigmatube.data.Comment
 import app.sigmatube.data.VideoDetails
+import app.sigmatube.data.LocalHiddenChannels
 import app.sigmatube.data.VideoItem
+import app.sigmatube.data.withoutHidden
 import app.sigmatube.data.auth.LikeStatus
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material.icons.filled.ThumbDown
@@ -214,6 +216,7 @@ private fun Details(
 ) {
     val context = LocalContext.current
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val hidden = LocalHiddenChannels.current
 
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "title") {
@@ -291,7 +294,7 @@ private fun Details(
             item(key = "comments") { CommentsTeaser(comments, onOpenComments) }
         }
 
-        items(details.related, key = { it.url }) { video ->
+        items(details.related.withoutHidden(hidden), key = { it.url }) { video ->
             VideoCard(
                 video = video,
                 onClick = { onVideoClick(video) },

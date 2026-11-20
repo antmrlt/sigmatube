@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import app.sigmatube.data.Comment
 import app.sigmatube.data.VideoDetails
 import app.sigmatube.data.YouTubeRepository
+import app.sigmatube.data.AppSettings
+import app.sigmatube.data.LocalHistory
+import app.sigmatube.data.VideoItem
 import app.sigmatube.data.auth.AccountManager
 import app.sigmatube.data.auth.InnerTubeClient
 import app.sigmatube.data.auth.LikeStatus
@@ -55,9 +58,11 @@ class WatchViewModel(
     private val playerManager: PlayerManager,
     private val innerTube: InnerTubeClient,
     private val account: AccountManager,
+    private val settings: AppSettings,
+    private val history: LocalHistory,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(WatchState())
+    private val _state = MutableStateFlow(WatchState(speed = settings.state.value.defaultSpeed))
     val state: StateFlow<WatchState> = _state
 
     val player get() = playerManager.player
@@ -82,7 +87,7 @@ class WatchViewModel(
         commentsJob?.cancel()
         playerManager.stop(this)
         _state.update {
-            WatchState(url = url, isLoading = true, speed = it.speed, loop = it.loop)
+            WatchState(url = url, isLoading = true, speed = settings.state.value.defaultSpeed, loop = it.loop)
         }
         load(url, startPositionMs = 0)
         loadComments(url)
@@ -144,6 +149,7 @@ class WatchViewModel(
         loadJob = viewModelScope.launch {
             runCatching { repository.video(url) }
                 .onSuccess { details ->
+                    history.addWatched(details.toItem())
                     _state.update { it.copy(details = details, isLoading = false, error = null) }
                     startPlayback(details, startPositionMs)
                 }
@@ -153,7 +159,7 @@ class WatchViewModel(
 
     private fun startPlayback(details: VideoDetails, positionMs: Long) {
         val s = _state.value
-        playerManager.play(this, details, positionMs, s.preferredHeight)
+        playerManager.play(this, details, positionMs, s.preferredHeight, settings.autoMaxHeight())
         player.setPlaybackSpeed(s.speed)
         player.repeatMode = if (s.loop) androidx.media3.common.Player.REPEAT_MODE_ONE else androidx.media3.common.Player.REPEAT_MODE_OFF
         _state.update { it.copy(qualityLabel = playerManager.currentQualityLabel) }
@@ -217,6 +223,20 @@ class WatchViewModel(
             }
         }
     }
+
+    private fun VideoDetails.toItem() = VideoItem(
+        url = url,
+        title = title,
+        thumbnail = thumbnail,
+        channelName = channelName,
+        channelUrl = channelUrl,
+        channelAvatar = channelAvatar,
+        durationSeconds = durationSeconds,
+        viewCount = viewCount,
+        uploadDate = uploadDate,
+        uploadedText = uploadedText,
+        isLive = isLive,
+    )
 
     fun pause() = playerManager.pause(this)
 

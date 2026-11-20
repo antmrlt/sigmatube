@@ -111,7 +111,10 @@ fun rememberPlayerUiState(player: Player): PlayerUiState {
     return state
 }
 
-private const val SEEK_MS = 10_000L
+/** Double-tap / ±button seek step, from settings. */
+val LocalSeekMs = androidx.compose.runtime.compositionLocalOf { 10_000L }
+
+private fun Player.seekBy(ms: Long) = seekTo((currentPosition + ms).coerceIn(0L, duration.takeIf { it > 0 } ?: Long.MAX_VALUE))
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -127,6 +130,7 @@ fun VideoPlayer(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val seekMs = LocalSeekMs.current
     var controlsVisible by remember { mutableStateOf(true) }
     var interactionTick by remember { mutableLongStateOf(0L) }
     var scrubFraction by remember { mutableStateOf<Float?>(null) }
@@ -179,7 +183,7 @@ fun VideoPlayer(
                         },
                         onDoubleTap = { offset ->
                             val forward = offset.x > widthPx / 2f
-                            if (forward) player.seekForward() else player.seekBack()
+                            if (forward) player.seekBy(seekMs) else player.seekBy(-seekMs)
                             seekFeedback = if (forward) 1 else -1
                             seekFeedbackTick++
                         },
@@ -264,6 +268,7 @@ private fun Controls(
     onSettings: () -> Unit,
     onInteraction: () -> Unit,
 ) {
+    val seekMs = LocalSeekMs.current
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
         Row(
             Modifier
@@ -294,7 +299,7 @@ private fun Controls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             RoundIcon(Icons.Rounded.Replay10, "Reculer de 10 s", 52.dp) {
-                player.seekBack(); onInteraction()
+                player.seekBy(-seekMs); onInteraction()
             }
             if (ui.isBuffering) {
                 Box(Modifier.size(64.dp))
@@ -314,7 +319,7 @@ private fun Controls(
                 }
             }
             RoundIcon(Icons.Rounded.Forward10, "Avancer de 10 s", 52.dp) {
-                player.seekForward(); onInteraction()
+                player.seekBy(seekMs); onInteraction()
             }
         }
 
@@ -416,7 +421,7 @@ private fun SeekFeedback(forward: Boolean, modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(if (forward) Icons.Rounded.FastForward else Icons.Rounded.FastRewind, null, tint = Color.White)
-        Text("${SEEK_MS / 1000} s", color = Color.White, style = MaterialTheme.typography.labelMedium)
+        Text("${LocalSeekMs.current / 1000} s", color = Color.White, style = MaterialTheme.typography.labelMedium)
     }
 }
 

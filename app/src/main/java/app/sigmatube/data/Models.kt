@@ -58,13 +58,13 @@ data class StreamOptions(
     val isLive: Boolean,
 ) {
     /** [preferredHeight] null = Auto (best up to 1080p). */
-    fun resolve(preferredHeight: Int?): PlaybackSource {
+    fun resolve(preferredHeight: Int?, autoMax: Int = AUTO_MAX_HEIGHT): PlaybackSource {
         if (isLive) {
             hlsUrl?.let { return PlaybackSource.Hls(it) }
             dashUrl?.let { return PlaybackSource.Dash(it) }
         }
         if (audioUrl != null && qualities.isNotEmpty()) {
-            val target = preferredHeight ?: AUTO_MAX_HEIGHT
+            val target = preferredHeight ?: autoMax
             val pick = qualities.filter { it.height <= target }
                 .maxWithOrNull(compareBy<VideoQuality> { it.height }.thenBy { if (preferredHeight == null) -it.fps else it.fps })
                 ?: qualities.minBy { it.height }
@@ -82,6 +82,7 @@ data class StreamOptions(
 }
 
 data class ChannelDetails(
+    val id: String,
     val url: String,
     val name: String,
     val avatar: String?,
@@ -118,6 +119,14 @@ class CommentsPage(
     val nextPage: Page?,
     val totalCount: Int,
     val disabled: Boolean,
+)
+
+data class PlaylistDetails(
+    val url: String,
+    val title: String,
+    val uploader: String?,
+    val thumbnail: String?,
+    val videoCount: Long,
 )
 
 class PagedResult<T>(val items: List<T>, val nextPage: Page?)

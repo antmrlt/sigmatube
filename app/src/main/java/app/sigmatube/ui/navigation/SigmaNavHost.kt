@@ -35,9 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hasRoute
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -56,6 +54,10 @@ import app.sigmatube.ui.account.LoginScreen
 import app.sigmatube.ui.search.SearchScreen
 import app.sigmatube.ui.search.SearchViewModel
 import app.sigmatube.ui.watch.WatchOverlay
+import app.sigmatube.ui.playlist.PlaylistScreen
+import app.sigmatube.ui.playlist.PlaylistViewModel
+import app.sigmatube.data.LocalHiddenChannels
+import androidx.compose.runtime.CompositionLocalProvider
 import app.sigmatube.ui.watch.WatchSheetState
 import app.sigmatube.ui.watch.WatchViewModel
 import androidx.compose.foundation.layout.Box
@@ -66,34 +68,40 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.produceState
+import app.sigmatube.BuildConfig
+import app.sigmatube.data.auth.AccountInfo
+import app.sigmatube.ui.components.AppTopBar
+import app.sigmatube.ui.components.Avatar
+import app.sigmatube.ui.library.HISTORY
+import app.sigmatube.ui.library.VideoListScreen
+import app.sigmatube.ui.settings.SettingsScreen
+import app.sigmatube.ui.watch.LocalSeekMs
 import kotlinx.serialization.Serializable
-import kotlin.reflect.KClass
 
-@Serializable data object HomeRoute
-@Serializable data object SubscriptionsRoute
-@Serializable data object LibraryRoute
+/** The three swipeable top-level pages (Accueil / Abonnements / Vous). */
+@Serializable data object TabsRoute
 @Serializable data object SearchRoute
 @Serializable data object LoginRoute
 @Serializable data class ChannelRoute(val url: String)
+@Serializable data class PlaylistRoute(val url: String)
+@Serializable data object SettingsRoute
+@Serializable data class VideoListRoute(val kind: String)
 
-private data class Tab(
-    val route: Any,
-    val routeClass: KClass<*>,
-    val label: String,
-    val icon: ImageVector,
-    val selectedIcon: ImageVector,
-)
+private data class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 
 private val tabs = listOf(
-    Tab(HomeRoute, HomeRoute::class, "Accueil", Icons.Outlined.Home, Icons.Filled.Home),
-    Tab(SubscriptionsRoute, SubscriptionsRoute::class, "Abonnements", Icons.Outlined.Subscriptions, Icons.Filled.Subscriptions),
-    Tab(LibraryRoute, LibraryRoute::class, "Vous", Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle),
+    Tab("Accueil", Icons.Outlined.Home, Icons.Filled.Home),
+    Tab("Abonnements", Icons.Outlined.Subscriptions, Icons.Filled.Subscriptions),
+    Tab("Vous", Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle),
 )
-
-private fun NavDestination?.isTab(tab: Tab) = this?.hasRoute(tab.routeClass) == true
 
 @Composable
 fun SigmaNavHost(
@@ -105,13 +113,14 @@ fun SigmaNavHost(
     val repository = container.repository
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
-    val showBottomBar = destination?.hasRoute(SearchRoute::class) != true && destination?.hasRoute(LoginRoute::class) != true
+    val showBottomBar = listOf(SearchRoute::class, LoginRoute::class, SettingsRoute::class).none { destination?.hasRoute(it) == true }
 
     // Activity-scoped (we're outside any NavHost destination here).
-    val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account) }
+    val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account, container.settings, container.history) }
     val watchState by watch.state.collectAsStateWithLifecycle()
     val sheet = remember { WatchSheetState() }
     val scope = rememberCoroutineScope()
+    val pagerState = rememberPagerState { tabs.size }
     val openVideo: (String) -> Unit = { url ->
         watch.open(url)
         scope.launch { sheet.expand() }
@@ -128,113 +137,178 @@ fun SigmaNavHost(
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     val navBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    Box(Modifier.fillMaxSize()) {
-    Scaffold(
-        contentWindowInsets = WindowInsets(0),
-        bottomBar = {
-            if (showBottomBar) {
-                BottomBar(
-                    destination,
-                    Modifier.onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } },
-                ) { tab ->
-                    navController.navigate(tab.route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                }
-            }
-        },
-    ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = HomeRoute,
-            enterTransition = { fadeIn() },
-            exitTransition = { fadeOut() },
-            modifier = Modifier
-                .padding(padding)
-                .consumeWindowInsets(padding),
-        ) {
-            composable<HomeRoute> {
-                HomeScreen(
-                    viewModel = viewModel { HomeViewModel(repository, container.innerTube, container.account) },
-                    onVideoClick = { openVideo(it.url) },
-                    onChannelClick = { navController.navigate(ChannelRoute(it)) },
-                    onSearchClick = { navController.navigate(SearchRoute) },
-                )
-            }
-            composable<SubscriptionsRoute> {
-                SubscriptionsScreen(
-                    account = container.account,
-                    viewModel = viewModel { SubscriptionsViewModel(container.innerTube) },
-                    onLogin = { navController.navigate(LoginRoute) },
-                    onVideoClick = { openVideo(it.url) },
-                    onChannelClick = { navController.navigate(ChannelRoute(it)) },
-                )
-            }
-            composable<LibraryRoute> {
-                LibraryScreen(container.account, container.innerTube, onLogin = { navController.navigate(LoginRoute) })
-            }
-            composable<LoginRoute> {
-                LoginScreen(container.account, onDone = { navController.popBackStack() })
-            }
-            composable<SearchRoute> {
-                SearchScreen(
-                    viewModel = viewModel { SearchViewModel(repository) },
-                    onBack = navController::popBackStack,
-                    onVideoClick = { openVideo(it.url) },
-                    onChannelClick = { navController.navigate(ChannelRoute(it)) },
-                )
-            }
-            composable<ChannelRoute> { entry ->
-                val route = entry.toRoute<ChannelRoute>()
-                ChannelScreen(
-                    viewModel = viewModel { ChannelViewModel(route.url, repository) },
-                    onBack = navController::popBackStack,
-                    onVideoClick = { openVideo(it.url) },
-                )
-            }
-        }
+    val hiddenChannels by container.hiddenChannels.ids.collectAsStateWithLifecycle()
+    val settingsState by container.settings.state.collectAsStateWithLifecycle()
+    val cookies by container.account.cookies.collectAsStateWithLifecycle()
+    val accountInfo by produceState<AccountInfo?>(null, cookies) {
+        value = if (cookies != null) container.innerTube.accountInfo() else null
     }
 
-    if (watchState.url != null) {
-        WatchOverlay(
-            viewModel = watch,
-            sheet = sheet,
-            bottomInset = if (showBottomBar) bottomBarHeight else navBarInset,
-            onOpenVideo = openVideo,
-            onChannelClick = { navController.navigate(ChannelRoute(it)) },
-            onLoginRequired = { navController.navigate(LoginRoute) },
-        )
+    CompositionLocalProvider(
+        LocalHiddenChannels provides hiddenChannels,
+        LocalSeekMs provides settingsState.seekSeconds * 1000L,
+    ) {
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            contentWindowInsets = WindowInsets(0),
+            bottomBar = {
+                if (showBottomBar) {
+                    BottomBar(
+                        selected = pagerState.currentPage,
+                        avatar = accountInfo?.avatar,
+                        modifier = Modifier.onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } },
+                    ) { index ->
+                        // From a channel page: come back to the tabs first.
+                        if (destination?.hasRoute(TabsRoute::class) != true) navController.popBackStack(TabsRoute, inclusive = false)
+                        scope.launch { pagerState.animateScrollToPage(index) }
+                    }
+                }
+            },
+        ) { padding ->
+            NavHost(
+                navController = navController,
+                startDestination = TabsRoute,
+                enterTransition = { fadeIn() },
+                exitTransition = { fadeOut() },
+                modifier = Modifier
+                    .padding(padding)
+                    .consumeWindowInsets(padding),
+            ) {
+                composable<TabsRoute> {
+                    Column(Modifier.fillMaxSize()) {
+                    AppTopBar(
+                        onSearch = { navController.navigate(SearchRoute) },
+                        onSettings = if (pagerState.currentPage == 2) ({ navController.navigate(SettingsRoute) }) else null,
+                    )
+                    HorizontalPager(
+                        state = pagerState,
+                        beyondViewportPageCount = 1,
+                        modifier = Modifier.weight(1f),
+                    ) { page ->
+                        when (page) {
+                            0 -> HomeScreen(
+                                viewModel = viewModel { HomeViewModel(repository, container.innerTube, container.account, container.settings) },
+                                onVideoClick = { openVideo(it.url) },
+                                onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                            )
+                            1 -> SubscriptionsScreen(
+                                account = container.account,
+                                viewModel = viewModel { SubscriptionsViewModel(container.innerTube) },
+                                onLogin = { navController.navigate(LoginRoute) },
+                                onVideoClick = { openVideo(it.url) },
+                                onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                            )
+                            else -> LibraryScreen(
+                                account = container.account,
+                                accountInfo = accountInfo,
+                                history = container.history,
+                                onLogin = { navController.navigate(LoginRoute) },
+                                onVideoClick = { openVideo(it.url) },
+                                onOpenHistory = { navController.navigate(VideoListRoute(HISTORY)) },
+                                onOpenPlaylist = { navController.navigate(VideoListRoute(it)) },
+                            )
+                        }
+                    }
+                    }
+                }
+                composable<SettingsRoute> {
+                    SettingsScreen(
+                        settings = container.settings,
+                        history = container.history,
+                        hiddenChannels = container.hiddenChannels,
+                        account = container.account,
+                        appVersion = BuildConfig.VERSION_NAME,
+                        onBack = navController::popBackStack,
+                    )
+                }
+                composable<VideoListRoute> { entry ->
+                    VideoListScreen(
+                        kind = entry.toRoute<VideoListRoute>().kind,
+                        history = container.history,
+                        innerTube = container.innerTube,
+                        onBack = navController::popBackStack,
+                        onVideoClick = { openVideo(it.url) },
+                    )
+                }
+                composable<LoginRoute> {
+                    LoginScreen(container.account, onDone = { navController.popBackStack() })
+                }
+                composable<SearchRoute> {
+                    SearchScreen(
+                        viewModel = viewModel { SearchViewModel(repository, container.history) },
+                        onBack = navController::popBackStack,
+                        onVideoClick = { openVideo(it.url) },
+                        onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                    )
+                }
+                composable<ChannelRoute> { entry ->
+                    val route = entry.toRoute<ChannelRoute>()
+                    ChannelScreen(
+                        viewModel = viewModel {
+                            ChannelViewModel(route.url, repository, container.innerTube, container.account, container.hiddenChannels)
+                        },
+                        onBack = navController::popBackStack,
+                        onVideoClick = { openVideo(it.url) },
+                        onPlaylistClick = { navController.navigate(PlaylistRoute(it)) },
+                        onLoginRequired = { navController.navigate(LoginRoute) },
+                    )
+                }
+                composable<PlaylistRoute> { entry ->
+                    val route = entry.toRoute<PlaylistRoute>()
+                    PlaylistScreen(
+                        viewModel = viewModel { PlaylistViewModel(route.url, repository) },
+                        onBack = navController::popBackStack,
+                        onVideoClick = { openVideo(it.url) },
+                    )
+                }
+            }
+        }
+
+        if (watchState.url != null) {
+            WatchOverlay(
+                viewModel = watch,
+                sheet = sheet,
+                bottomInset = if (showBottomBar) bottomBarHeight else navBarInset,
+                onOpenVideo = openVideo,
+                onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                onLoginRequired = { navController.navigate(LoginRoute) },
+            )
+        }
     }
     }
 }
 
 @Composable
-private fun BottomBar(destination: NavDestination?, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
+private fun BottomBar(selected: Int, avatar: String?, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     Surface(color = MaterialTheme.colorScheme.background, modifier = modifier) {
         Column {
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.navigationBarsPadding().height(56.dp)) {
-                tabs.forEach { tab ->
-                    val selected = destination.isTab(tab)
-                    Column(
+            Row(Modifier.navigationBarsPadding().height(52.dp)) {
+                tabs.forEachIndexed { index, tab ->
+                    val isSelected = index == selected
+                    Box(
                         Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                            ) { onSelect(tab) },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+                            ) { onSelect(index) },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            if (selected) tab.selectedIcon else tab.icon,
-                            contentDescription = null,
-                            modifier = Modifier.size(26.dp),
-                        )
-                        Text(tab.label, style = MaterialTheme.typography.labelSmall)
+                        if (index == 2 && avatar != null) {
+                            Avatar(
+                                avatar,
+                                28.dp,
+                                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.onBackground, CircleShape) else Modifier,
+                            )
+                        } else {
+                            Icon(
+                                if (isSelected) tab.selectedIcon else tab.icon,
+                                contentDescription = tab.label,
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
                     }
                 }
             }

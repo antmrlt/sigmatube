@@ -1,54 +1,67 @@
 package app.sigmatube.ui.search
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.NorthWest
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import app.sigmatube.data.LocalHiddenChannels
+import app.sigmatube.data.LocalHistory
 import app.sigmatube.data.VideoItem
 import app.sigmatube.data.YouTubeRepository
+import app.sigmatube.data.withoutHidden
 import app.sigmatube.ui.components.ErrorState
 import app.sigmatube.ui.components.ListFooterLoader
 import app.sigmatube.ui.components.LoadMoreEffect
@@ -75,10 +88,14 @@ data class SearchUiState(
     val nextPage: Page? = null,
 )
 
-class SearchViewModel(private val repository: YouTubeRepository) : ViewModel() {
+class SearchViewModel(
+    private val repository: YouTubeRepository,
+    private val history: LocalHistory,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state
+    val searchHistory = history.searches
 
     private var suggestionJob: Job? = null
     private var searchJob: Job? = null
@@ -86,8 +103,12 @@ class SearchViewModel(private val repository: YouTubeRepository) : ViewModel() {
     fun onQueryChange(query: String) {
         _state.update { it.copy(query = query, submittedQuery = null) }
         suggestionJob?.cancel()
+        if (query.isBlank()) {
+            _state.update { it.copy(suggestions = emptyList()) }
+            return
+        }
         suggestionJob = viewModelScope.launch {
-            delay(250) // debounce keystrokes
+            delay(200) // debounce keystrokes
             val suggestions = runCatching { repository.suggestions(query) }.getOrDefault(emptyList())
             _state.update { it.copy(suggestions = suggestions) }
         }
@@ -96,6 +117,7 @@ class SearchViewModel(private val repository: YouTubeRepository) : ViewModel() {
     fun submit(query: String = _state.value.query) {
         val q = query.trim()
         if (q.isEmpty()) return
+        history.addSearch(q)
         suggestionJob?.cancel()
         searchJob?.cancel()
         _state.update {
@@ -107,6 +129,8 @@ class SearchViewModel(private val repository: YouTubeRepository) : ViewModel() {
                 .onFailure { e -> _state.update { it.copy(error = e, isLoading = false) } }
         }
     }
+
+    fun removeFromHistory(query: String) = history.removeSearch(query)
 
     fun loadMore() {
         val s = _state.value
@@ -138,6 +162,8 @@ fun SearchScreen(
     onChannelClick: (String) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val hiddenIds = LocalHiddenChannels.current
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -156,36 +182,19 @@ fun SearchScreen(
                 Modifier
                     .statusBarsPadding()
                     .fillMaxWidth()
-                    .padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                    .padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Retour") }
-                TextField(
+                SearchField(
                     value = state.query,
                     onValueChange = viewModel::onQueryChange,
-                    placeholder = { Text("Rechercher sur YouTube") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(50),
-                    textStyle = MaterialTheme.typography.bodyLarge,
-                    trailingIcon = {
-                        if (state.query.isNotEmpty()) {
-                            IconButton(onClick = {
-                                viewModel.onQueryChange("")
-                                focusRequester.requestFocus()
-                            }) { Icon(Icons.Rounded.Close, "Effacer") }
-                        }
+                    onSearch = { submit(state.query) },
+                    onClear = {
+                        viewModel.onQueryChange("")
+                        focusRequester.requestFocus()
                     },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submit(state.query) }),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(focusRequester),
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 )
             }
         },
@@ -194,9 +203,11 @@ fun SearchScreen(
         when {
             state.submittedQuery == null -> Suggestions(
                 query = state.query,
+                history = searchHistory,
                 suggestions = state.suggestions,
                 onPick = ::submit,
                 onFill = viewModel::onQueryChange,
+                onRemove = viewModel::removeFromHistory,
                 modifier = modifier,
             )
             state.isLoading -> LoadingState(modifier)
@@ -211,7 +222,7 @@ fun SearchScreen(
                 val listState = rememberLazyListState()
                 LoadMoreEffect(listState, onLoadMore = viewModel::loadMore)
                 LazyColumn(modifier, state = listState) {
-                    items(state.results, key = { it.url }) { video ->
+                    items(state.results.withoutHidden(hiddenIds), key = { it.url }) { video ->
                         VideoCard(
                             video = video,
                             onClick = { onVideoClick(video) },
@@ -225,41 +236,124 @@ fun SearchScreen(
     }
 }
 
+/** Slim 40dp pill, like YouTube's search box. */
 @Composable
-private fun Suggestions(
-    query: String,
-    suggestions: List<String>,
-    onPick: (String) -> Unit,
-    onFill: (String) -> Unit,
+private fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(modifier) {
-        items(suggestions) { suggestion ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onPick(suggestion) }
-                    .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-            ) {
-                Icon(Icons.Outlined.Search, null)
-                Text(highlightCompletion(query, suggestion), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                IconButton(onClick = { onFill("$suggestion ") }) {
-                    Icon(Icons.Outlined.NorthWest, "Compléter")
-                }
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(50))
+            .background(colors.surfaceContainerHigh)
+            .padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (value.isEmpty()) {
+                Text("Rechercher sur YouTube", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+                cursorBrush = SolidColor(colors.onSurface),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (value.isNotEmpty()) {
+            IconButton(onClick = onClear, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Rounded.Close, "Effacer", Modifier.size(20.dp))
             }
         }
     }
 }
 
+@Composable
+private fun Suggestions(
+    query: String,
+    history: List<String>,
+    suggestions: List<String>,
+    onPick: (String) -> Unit,
+    onFill: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var confirmRemove by remember { mutableStateOf<String?>(null) }
+    val q = query.trim()
+    // History first (matching what's typed), then live suggestions not already shown.
+    val pastMatches = if (q.isEmpty()) history else history.filter { it.contains(q, ignoreCase = true) }.take(3)
+    val live = suggestions.filterNot { s -> pastMatches.any { it.equals(s, ignoreCase = true) } }
+
+    LazyColumn(modifier) {
+        items(pastMatches, key = { "h:$it" }) { entry ->
+            SuggestionRow(
+                icon = Icons.Outlined.History,
+                text = highlightCompletion(q, entry),
+                onClick = { onPick(entry) },
+                onLongClick = { confirmRemove = entry },
+                onFill = { onFill("$entry ") },
+            )
+        }
+        items(live, key = { "s:$it" }) { suggestion ->
+            SuggestionRow(
+                icon = Icons.Outlined.Search,
+                text = highlightCompletion(q, suggestion),
+                onClick = { onPick(suggestion) },
+                onLongClick = null,
+                onFill = { onFill("$suggestion ") },
+            )
+        }
+    }
+
+    confirmRemove?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { Text(entry) },
+            text = { Text("Supprimer de l'historique des recherches ?") },
+            confirmButton = { TextButton(onClick = { onRemove(entry); confirmRemove = null }) { Text("Supprimer") } },
+            dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Annuler") } },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SuggestionRow(
+    icon: ImageVector,
+    text: AnnotatedString,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    onFill: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        Icon(icon, null)
+        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+        IconButton(onClick = onFill) { Icon(Icons.Outlined.NorthWest, "Compléter") }
+    }
+}
+
 /** Typed prefix in regular weight, YouTube-style bold for the suggested completion. */
 private fun highlightCompletion(query: String, suggestion: String): AnnotatedString = buildAnnotatedString {
-    val q = query.trim()
-    if (q.isNotEmpty() && suggestion.startsWith(q, ignoreCase = true)) {
-        append(suggestion.substring(0, q.length))
-        withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(suggestion.substring(q.length)) }
+    if (query.isNotEmpty() && suggestion.startsWith(query, ignoreCase = true)) {
+        append(suggestion.substring(0, query.length))
+        withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(suggestion.substring(query.length)) }
     } else {
-        withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(suggestion) }
+        withStyle(SpanStyle(fontWeight = if (query.isEmpty()) FontWeight.Normal else FontWeight.Medium)) { append(suggestion) }
     }
 }

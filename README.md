@@ -17,15 +17,6 @@ L'interface que tu connais, sans tout le reste.
 
 </div>
 
-<br />
-
-<p align="center">
-  <img src="docs/screenshots/home.jpg" width="200" alt="Accueil" />
-  <img src="docs/screenshots/watch.jpg" width="200" alt="Lecture" />
-  <img src="docs/screenshots/comments.jpg" width="200" alt="Commentaires" />
-  <img src="docs/screenshots/miniplayer.jpg" width="200" alt="Mini-lecteur" />
-</p>
-
 ---
 
 ## Fonctionnalités
@@ -35,9 +26,11 @@ L'interface que tu connais, sans tout le reste.
 - Lecteur sur mesure : double-tap pour avancer/reculer de 10 s, barre de progression précise
 - **Qualité au choix** de 144p à 2160p, vitesse de lecture, lecture en boucle
 - **Plein écran** en glissant la vidéo vers le haut ; vidéos suggérées en glissant encore vers le haut
+- Miniatures en haute définition
 - **Mini-lecteur flottant** : glisse la vidéo vers le bas, déplace-la dans un des 4 coins, jette-la hors de l'écran pour la fermer
 
 ### 🧭 Navigation
+- Navigation entre les onglets en glissant horizontalement
 - Accueil par catégories (**Musique, Jeux vidéo, Films, Podcasts**) sans lives
 - Recherche avec suggestions instantanées et défilement infini
 - Pages chaînes, description et **commentaires** en panneaux qui laissent la vidéo visible
@@ -45,21 +38,8 @@ L'interface que tu connais, sans tout le reste.
 
 ### 👤 Compte (optionnel)
 - Connexion à ton compte Google via la page officielle de Google
-- **Fil d'accueil personnalisé** et **flux de tes abonnements**
+- **Fil d'accueil personnalisé** et **flux de tes abonnements** (avec la rangée « Les plus pertinentes »)
 - **J'aime / Je n'aime pas** synchronisés avec ton compte
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshots/search.jpg" width="230" /><br /><sub>Recherche</sub></td>
-    <td align="center"><img src="docs/screenshots/quality.jpg" width="230" /><br /><sub>Qualité vidéo</sub></td>
-    <td align="center"><img src="docs/icon.png" width="140" /><br /><sub>Icône de l'app</sub></td>
-  </tr>
-</table>
-
-<p align="center">
-  <img src="docs/screenshots/fullscreen.jpg" width="720" alt="Plein écran avec suggestions" /><br />
-  <sub>Plein écran : glisse vers le haut pour afficher les suggestions</sub>
-</p>
 
 ---
 

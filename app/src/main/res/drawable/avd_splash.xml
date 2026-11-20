@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launch animation: the red block pops in, then the Σ grows and fades in. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="108dp"
+            android:height="108dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+            <group
+                android:name="logo"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:scaleX="0"
+                android:scaleY="0">
+                <path
+                    android:fillColor="#FF0033"
+                    android:pathData="M37,35 H71 A10,10 0 0 1 81,45 V63 A10,10 0 0 1 71,73 H37 A10,10 0 0 1 27,63 V45 A10,10 0 0 1 37,35 Z" />
+                <group
+                    android:name="sigma"
+                    android:pivotX="54"
+                    android:pivotY="54"
+                    android:scaleX="0.3"
+                    android:scaleY="0.3">
+                    <path
+                        android:name="sigmaPath"
+                        android:fillAlpha="0"
+                        android:fillColor="#FFFFFF"
+                        android:pathData="M44.57,43 L63.43,43 L63.43,46.93 L50.54,46.93 L57.14,54 L50.54,61.07 L63.43,61.07 L63.43,65 L44.57,65 L44.57,61.86 L52.11,54 L44.57,46.14 Z" />
+                </group>
+            </group>
+        </vector>
+    </aapt:attr>
+
+    <target android:name="logo">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:duration="320"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleX"
+                    android:valueFrom="0"
+                    android:valueTo="1" />
+                <objectAnimator
+                    android:duration="320"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleY"
+                    android:valueFrom="0"
+                    android:valueTo="1" />
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="sigma">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:duration="300"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleX"
+                    android:startOffset="200"
+                    android:valueFrom="0.3"
+                    android:valueTo="1" />
+                <objectAnimator
+                    android:duration="300"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleY"
+                    android:startOffset="200"
+                    android:valueFrom="0.3"
+                    android:valueTo="1" />
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="sigmaPath">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="200"
+                android:propertyName="fillAlpha"
+                android:startOffset="200"
+                android:valueFrom="0"
+                android:valueTo="1" />
+        </aapt:attr>
+    </target>
+</animated-vector>

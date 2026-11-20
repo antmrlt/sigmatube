@@ -45,7 +45,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.sigmatube.data.FeedCategory
+import app.sigmatube.data.LocalHiddenChannels
 import app.sigmatube.data.VideoItem
+import app.sigmatube.data.withoutHidden
 import app.sigmatube.data.YouTubeRepository
 import app.sigmatube.data.auth.AccountManager
 import app.sigmatube.data.auth.InnerTubeClient
@@ -61,6 +63,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
+import app.sigmatube.data.AppSettings
 import kotlinx.coroutines.launch
 import org.schabi.newpipe.extractor.Page
 
@@ -80,7 +86,10 @@ class HomeViewModel(
     private val repository: YouTubeRepository,
     private val innerTube: InnerTubeClient,
     private val account: AccountManager,
+    settings: AppSettings,
 ) : ViewModel() {
+
+    val hideLives = settings.state.map { it.hideLives }.stateIn(viewModelScope, SharingStarted.Eagerly, settings.state.value.hideLives)
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state
@@ -116,7 +125,7 @@ class HomeViewModel(
             runCatching {
                 when {
                     selected != null -> repository.category(selected) to null
-                    account.isLoggedIn -> innerTube.homeFeed().let { it.items.filterNot(VideoItem::isLive) to it.nextPage }
+                    account.isLoggedIn -> innerTube.homeFeed().let { it.items to it.nextPage }
                     else -> repository.discover() to null
                 }
             }.onSuccess { (videos, next) ->
@@ -136,7 +145,7 @@ class HomeViewModel(
             val result = runCatching { innerTube.homeFeed(page) }.getOrNull()
             _state.update {
                 it.copy(
-                    videos = (it.videos + result?.items.orEmpty().filterNot(VideoItem::isLive)).distinctBy { v -> v.url },
+                    videos = (it.videos + result?.items.orEmpty()).distinctBy { v -> v.url },
                     nextPage = result?.nextPage,
                     isLoadingMore = false,
                 )
@@ -151,53 +160,37 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onVideoClick: (VideoItem) -> Unit,
     onChannelClick: (String) -> Unit,
-    onSearchClick: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val hiddenIds = LocalHiddenChannels.current
+    val hideLives = viewModel.hideLives.collectAsStateWithLifecycle().value
 
-    Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Wordmark() },
-                actions = {
-                    IconButton(onClick = onSearchClick) { Icon(Icons.Outlined.Search, "Rechercher", Modifier.size(26.dp)) }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    scrolledContainerColor = MaterialTheme.colorScheme.background,
-                ),
-                scrollBehavior = scrollBehavior,
-            )
-        },
-    ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = state.isRefreshing,
-            onRefresh = viewModel::refresh,
-            modifier = Modifier.padding(padding).fillMaxSize(),
-        ) {
-            val listState = rememberLazyListState()
-            LoadMoreEffect(listState, onLoadMore = viewModel::loadMore)
-            LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                item(key = "chips") {
-                    CategoryChips(state.categories, state.selected, viewModel::select)
+    PullToRefreshBox(
+        isRefreshing = state.isRefreshing,
+        onRefresh = viewModel::refresh,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        val listState = rememberLazyListState()
+        LoadMoreEffect(listState, onLoadMore = viewModel::loadMore)
+        LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            item(key = "chips") {
+                CategoryChips(state.categories, state.selected, viewModel::select)
+            }
+            when {
+                state.isLoading -> item(key = "loading") { LoadingState(Modifier.height(400.dp)) }
+                state.error != null && state.videos.isEmpty() -> item(key = "error") {
+                    ErrorState(state.error!!, onRetry = { viewModel.load() }, modifier = Modifier.height(400.dp))
                 }
-                when {
-                    state.isLoading -> item(key = "loading") { LoadingState(Modifier.height(400.dp)) }
-                    state.error != null && state.videos.isEmpty() -> item(key = "error") {
-                        ErrorState(state.error!!, onRetry = { viewModel.load() }, modifier = Modifier.height(400.dp))
+                else -> {
+                    val visible = state.videos.withoutHidden(hiddenIds).let { v -> if (hideLives) v.filterNot { it.isLive } else v }
+                    items(visible, key = { it.url }) { video ->
+                        VideoCard(
+                            video = video,
+                            onClick = { onVideoClick(video) },
+                            onChannelClick = video.channelUrl?.let { url -> { onChannelClick(url) } },
+                        )
                     }
-                    else -> {
-                        items(state.videos, key = { it.url }) { video ->
-                            VideoCard(
-                                video = video,
-                                onClick = { onVideoClick(video) },
-                                onChannelClick = video.channelUrl?.let { url -> { onChannelClick(url) } },
-                            )
-                        }
-                        if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
-                    }
+                    if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
                 }
             }
         }
@@ -230,15 +223,3 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
     )
 }
 
-@Composable
-private fun Wordmark() {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Image(painterResource(R.drawable.ic_logo), contentDescription = null, modifier = Modifier.size(width = 30.dp, height = 21.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(
-            "SigmaTube",
-            style = MaterialTheme.typography.titleLarge.copy(letterSpacing = (-0.8).sp),
-            fontWeight = FontWeight.Black,
-        )
-    }
-}

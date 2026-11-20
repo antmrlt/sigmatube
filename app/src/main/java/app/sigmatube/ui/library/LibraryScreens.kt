@@ -1,6 +1,31 @@
 package app.sigmatube.ui.library
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.WatchLater
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.lifecycle.viewmodel.compose.viewModel
+import app.sigmatube.data.LocalHistory
+import app.sigmatube.ui.components.MessageState
+import app.sigmatube.ui.components.VideoRow
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.style.TextOverflow
+import app.sigmatube.ui.components.VideoShelfCard
+import app.sigmatube.util.Format
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,6 +67,12 @@ import app.sigmatube.data.VideoItem
 import app.sigmatube.data.auth.AccountInfo
 import app.sigmatube.data.auth.AccountManager
 import app.sigmatube.data.auth.InnerTubeClient
+import app.sigmatube.data.auth.SubscribedChannel
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import kotlinx.coroutines.async
 import app.sigmatube.ui.components.Avatar
 import app.sigmatube.ui.components.ErrorState
 import app.sigmatube.ui.components.ListFooterLoader
@@ -57,6 +88,9 @@ import org.schabi.newpipe.extractor.Page
 // region Subscriptions
 
 data class SubscriptionsUiState(
+    val channels: List<SubscribedChannel> = emptyList(),
+    val shelfTitle: String? = null,
+    val shelf: List<VideoItem> = emptyList(),
     val videos: List<VideoItem> = emptyList(),
     val nextPage: Page? = null,
     val isLoading: Boolean = false,
@@ -72,8 +106,19 @@ class SubscriptionsViewModel(private val innerTube: InnerTubeClient) : ViewModel
     fun load(refreshing: Boolean = false) {
         _state.update { it.copy(isLoading = !refreshing && it.videos.isEmpty(), isRefreshing = refreshing, error = null) }
         viewModelScope.launch {
-            runCatching { innerTube.subscriptionsFeed() }
-                .onSuccess { r -> _state.update { SubscriptionsUiState(videos = r.items, nextPage = r.nextPage) } }
+            val channels = async { runCatching { innerTube.subscribedChannels() }.getOrDefault(emptyList()) }
+            runCatching { innerTube.subscriptionsWithShelf() }
+                .onSuccess { r ->
+                    _state.update {
+                        SubscriptionsUiState(
+                            channels = channels.await(),
+                            shelfTitle = r.shelfTitle,
+                            shelf = r.shelf,
+                            videos = r.videos,
+                            nextPage = r.nextPage,
+                        )
+                    }
+                }
                 .onFailure { e -> _state.update { it.copy(isLoading = false, isRefreshing = false, error = e) } }
         }
     }
@@ -121,18 +166,40 @@ fun SubscriptionsScreen(
     PullToRefreshBox(
         isRefreshing = state.isRefreshing,
         onRefresh = { viewModel.load(refreshing = true) },
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
+        modifier = Modifier.fillMaxSize(),
     ) {
         when {
             state.isLoading -> LoadingState()
             state.error != null && state.videos.isEmpty() -> ErrorState(state.error!!, onRetry = { viewModel.load() })
             else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                item {
-                    Text(
-                        "Abonnements",
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    )
+                if (state.channels.isNotEmpty()) {
+                    item(key = "channels") {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            items(state.channels, key = { it.id }) { channel ->
+                                ChannelBubble(channel, onClick = { onChannelClick(channel.url) })
+                            }
+                        }
+                    }
+                }
+                if (state.shelf.isNotEmpty()) {
+                    item(key = "shelf-title") { SectionTitle("Les plus pertinentes") }
+                    item(key = "shelf") {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        ) {
+                            items(state.shelf, key = { it.url }) { video ->
+                                VideoShelfCard(video, onClick = { onVideoClick(video) })
+                            }
+                        }
+                    }
+                    item(key = "latest-title") { SectionTitle("Les plus récentes") }
+                } else {
+                    item(key = "title") { SectionTitle("Abonnements") }
                 }
                 items(state.videos, key = { it.url }) { video ->
                     VideoCard(
@@ -147,46 +214,277 @@ fun SubscriptionsScreen(
     }
 }
 
+/** Avatar + name in the subscriptions row; a blue dot marks channels with new videos. */
+@Composable
+private fun ChannelBubble(channel: SubscribedChannel, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box {
+            Avatar(channel.avatar, 56.dp)
+            if (channel.hasNewContent) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(14.dp)
+                        .background(MaterialTheme.colorScheme.background, CircleShape)
+                        .padding(2.dp)
+                        .background(MaterialTheme.colorScheme.tertiary, CircleShape),
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            channel.name,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleLarge,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+    )
+}
+
 // endregion
 
 // region "Vous"
 
 @Composable
-fun LibraryScreen(account: AccountManager, innerTube: InnerTubeClient, onLogin: () -> Unit) {
+fun LibraryScreen(
+    account: AccountManager,
+    accountInfo: AccountInfo?,
+    history: LocalHistory,
+    onLogin: () -> Unit,
+    onVideoClick: (VideoItem) -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenPlaylist: (String) -> Unit,
+) {
     val cookies by account.cookies.collectAsStateWithLifecycle()
-    if (cookies == null) {
-        SignInPrompt(
-            title = "Profite de ton compte",
-            message = "Connecte-toi pour retrouver ton fil d'accueil personnalisé et tes abonnements, sans pub.",
-            onLogin = onLogin,
-        )
-        return
-    }
-    var info by remember { mutableStateOf<AccountInfo?>(null) }
-    LaunchedEffect(cookies) { info = innerTube.accountInfo() }
+    val watched by history.watched.collectAsStateWithLifecycle()
+    val loggedIn = cookies != null
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(info?.avatar, 72.dp)
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(info?.name ?: "Compte YouTube", style = MaterialTheme.typography.headlineSmall)
-                info?.handle?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    LazyColumn(Modifier.fillMaxSize()) {
+        item(key = "profile") {
+            if (loggedIn) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(accountInfo?.avatar, 72.dp)
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text(accountInfo?.name ?: "Compte YouTube", style = MaterialTheme.typography.headlineSmall)
+                        accountInfo?.handle?.let {
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            } else {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Profite de ton compte", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Connecte-toi pour retrouver ton fil personnalisé, tes abonnements et tes playlists.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = onLogin,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                    ) { Text("Se connecter") }
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
-        OutlinedButton(onClick = account::logout) {
-            Icon(Icons.AutoMirrored.Outlined.Logout, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Se déconnecter")
+
+        item(key = "history-title") {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenHistory)
+                    .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Historique", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                if (watched.isNotEmpty()) {
+                    Text(
+                        "Tout afficher",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+            }
         }
-        Spacer(Modifier.height(24.dp))
-        Text(
-            "L'historique, les playlists et les téléchargements arriveront ici.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        item(key = "history") {
+            if (watched.isEmpty()) {
+                Text(
+                    "Les vidéos que tu regardes apparaîtront ici.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            } else {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(watched.take(20), key = { it.url }) { video ->
+                        VideoShelfCard(video, onClick = { onVideoClick(video) }, modifier = Modifier.width(170.dp))
+                    }
+                }
+            }
+        }
+
+        if (loggedIn) {
+            item(key = "library-title") {
+                Text(
+                    "Bibliothèque",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(start = 16.dp, top = 24.dp, bottom = 4.dp),
+                )
+            }
+            item(key = "liked") { LibraryRow(Icons.Outlined.ThumbUp, "Vidéos J'aime") { onOpenPlaylist(LIKED) } }
+            item(key = "later") { LibraryRow(Icons.Outlined.WatchLater, "À regarder plus tard") { onOpenPlaylist(WATCH_LATER) } }
+        }
+        item(key = "bottom") { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+const val LIKED = "LL"
+const val WATCH_LATER = "WL"
+const val HISTORY = "history"
+
+@Composable
+private fun LibraryRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null)
+        Spacer(Modifier.width(24.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+// endregion
+
+// region Full lists (history, liked, watch later)
+
+data class VideoListUiState(
+    val videos: List<VideoItem> = emptyList(),
+    val nextPage: Page? = null,
+    val isLoading: Boolean = true,
+    val isLoadingMore: Boolean = false,
+    val error: Throwable? = null,
+)
+
+/** Account playlist (liked / watch later) loaded through InnerTube. */
+class AccountPlaylistViewModel(private val id: String, private val innerTube: InnerTubeClient) : ViewModel() {
+    private val _state = MutableStateFlow(VideoListUiState())
+    val state: StateFlow<VideoListUiState> = _state
+
+    init {
+        load()
+    }
+
+    fun load() {
+        _state.value = VideoListUiState()
+        viewModelScope.launch {
+            runCatching { innerTube.accountPlaylist(id) }
+                .onSuccess { r -> _state.value = VideoListUiState(videos = r.items, nextPage = r.nextPage, isLoading = false) }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, error = e) } }
+        }
+    }
+
+    fun loadMore() {
+        val s = _state.value
+        val page = s.nextPage ?: return
+        if (s.isLoading || s.isLoadingMore) return
+        _state.update { it.copy(isLoadingMore = true) }
+        viewModelScope.launch {
+            val r = runCatching { innerTube.accountPlaylist(id, page) }.getOrNull()
+            _state.update {
+                it.copy(videos = (it.videos + r?.items.orEmpty()).distinctBy { v -> v.url }, nextPage = r?.nextPage, isLoadingMore = false)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VideoListScreen(
+    kind: String,
+    history: LocalHistory,
+    innerTube: InnerTubeClient,
+    onBack: () -> Unit,
+    onVideoClick: (VideoItem) -> Unit,
+) {
+    val title = when (kind) {
+        HISTORY -> "Historique"
+        LIKED -> "Vidéos J'aime"
+        else -> "À regarder plus tard"
+    }
+    var confirmClear by remember { mutableStateOf(false) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title, style = MaterialTheme.typography.titleMedium) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Retour") } },
+                actions = {
+                    if (kind == HISTORY) {
+                        IconButton(onClick = { confirmClear = true }) { Icon(Icons.Outlined.DeleteSweep, "Effacer l'historique") }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+        },
+    ) { padding ->
+        val modifier = Modifier.padding(padding).fillMaxSize()
+        if (kind == HISTORY) {
+            val watched by history.watched.collectAsStateWithLifecycle()
+            if (watched.isEmpty()) {
+                MessageState("Aucune vidéo regardée", "Les vidéos que tu regardes apparaîtront ici.", modifier, icon = Icons.Outlined.History)
+            } else {
+                LazyColumn(modifier) { items(watched, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }) } }
+            }
+        } else {
+            val vm: AccountPlaylistViewModel = viewModel(key = kind) { AccountPlaylistViewModel(kind, innerTube) }
+            val state by vm.state.collectAsStateWithLifecycle()
+            val listState = rememberLazyListState()
+            LoadMoreEffect(listState, onLoadMore = vm::loadMore)
+            when {
+                state.isLoading -> LoadingState(modifier)
+                state.error != null -> ErrorState(state.error!!, onRetry = vm::load, modifier = modifier)
+                state.videos.isEmpty() -> MessageState("Cette liste est vide", null, modifier)
+                else -> LazyColumn(modifier, state = listState) {
+                    items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }) }
+                    if (state.isLoadingMore) item { ListFooterLoader() }
+                }
+            }
+        }
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            text = { Text("Effacer tout l'historique des vidéos regardées ?") },
+            confirmButton = { TextButton(onClick = { history.clearWatched(); confirmClear = false }) { Text("Effacer") } },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Annuler") } },
         )
     }
 }
@@ -196,7 +494,7 @@ fun LibraryScreen(account: AccountManager, innerTube: InnerTubeClient, onLogin: 
 @Composable
 private fun SignInPrompt(title: String, message: String, onLogin: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().statusBarsPadding().padding(32.dp),
+        Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

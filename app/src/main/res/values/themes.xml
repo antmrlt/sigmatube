@@ -1,7 +1,15 @@
 <resources>
-    <style name="Theme.SigmaTube" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.SigmaTube" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- Launch screen: animated logo, then hands over to Theme.SigmaTube. -->
+    <style name="Theme.SigmaTube.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/avd_splash</item>
+        <item name="windowSplashScreenAnimationDuration">520</item>
+        <item name="postSplashScreenTheme">@style/Theme.SigmaTube</item>
     </style>
 </resources>

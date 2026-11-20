@@ -1,5 +1,6 @@
 <resources>
-    <color name="background">#0E0E11</color>
-    <color name="accent">#FF4E5B</color>
+    <!-- Window / launch background, matches the Compose theme in each mode. -->
+    <color name="background">#FFFFFF</color>
+    <color name="accent">#FF0033</color>
     <color name="icon_background">#FFFFFF</color>
 </resources>

@@ -16,6 +16,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import app.sigmatube.data.PlaybackSource
+import app.sigmatube.data.StreamOptions
 import app.sigmatube.data.VideoDetails
 import app.sigmatube.data.extractor.OkHttpDownloader
 import org.schabi.newpipe.extractor.NewPipe
@@ -71,8 +72,14 @@ class PlayerManager(context: Context) {
     /** Whoever started the current playback; only they may stop/pause it (guards against stale screens). */
     private var owner: Any? = null
 
-    fun play(owner: Any, video: VideoDetails, startPositionMs: Long = 0, preferredHeight: Int? = null) {
-        val source = video.streams.resolve(preferredHeight)
+    fun play(
+        owner: Any,
+        video: VideoDetails,
+        startPositionMs: Long = 0,
+        preferredHeight: Int? = null,
+        autoMax: Int = StreamOptions.AUTO_MAX_HEIGHT,
+    ) {
+        val source = video.streams.resolve(preferredHeight, autoMax)
         val mediaSource = buildMediaSource(video, source) ?: return
         this.owner = owner
         currentUrl = video.url

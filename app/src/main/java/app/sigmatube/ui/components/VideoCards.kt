@@ -44,9 +44,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.sigmatube.data.VideoItem
+import app.sigmatube.data.auth.PlaylistItem
 import app.sigmatube.ui.theme.Accent
 import app.sigmatube.util.Format
 import coil3.compose.AsyncImage
+import coil3.compose.rememberAsyncImagePainter
 
 @Composable
 fun Thumbnail(video: VideoItem, modifier: Modifier = Modifier, shape: Shape = RectangleShape) {
@@ -56,10 +58,13 @@ fun Thumbnail(video: VideoItem, modifier: Modifier = Modifier, shape: Shape = Re
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
+        // Ask for the 1280x720 frame; fall back to whatever the API gave if it doesn't exist.
+        val fallback = rememberAsyncImagePainter(video.thumbnail)
         AsyncImage(
-            model = video.thumbnail,
+            model = remember(video.url) { hqThumbnailUrl(video.url) } ?: video.thumbnail,
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            error = fallback,
             modifier = Modifier.matchParentSize(),
         )
         val badge = if (video.isLive) "EN DIRECT" else Format.duration(video.durationSeconds)
@@ -194,6 +199,54 @@ fun VideoRow(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifie
     }
 }
 
+/** Compact card for horizontal rows (most relevant, channel shelves). */
+@Composable
+fun VideoShelfCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.width(260.dp).clickable(onClick = onClick)) {
+        Thumbnail(video, Modifier.fillMaxWidth(), RoundedCornerShape(12.dp))
+        Spacer(Modifier.height(8.dp))
+        Text(video.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(
+            Format.meta(video.channelName, Format.views(video.viewCount) ?: video.viewsText, video.uploadedText),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Playlist thumbnail with its video-count badge, then the title. */
+@Composable
+fun PlaylistCard(playlist: PlaylistItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.clickable(onClick = onClick)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            AsyncImage(playlist.thumbnail, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+            if (playlist.countText != null) {
+                Text(
+                    playlist.countText,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.8f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(playlist.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 /** Small rounded "pill" used for action rows (like, share…). */
 @Composable
 fun Pill(
@@ -226,3 +279,9 @@ fun VerifiedBadge(modifier: Modifier = Modifier) {
         modifier = modifier.size(14.dp),
     )
 }
+
+private val VIDEO_ID = Regex("""(?:v=|youtu\.be/|/shorts/|/live/)([A-Za-z0-9_-]{11})""")
+
+/** High-resolution 16:9 thumbnail (no letterboxing), available for most videos. */
+fun hqThumbnailUrl(videoUrl: String): String? =
+    VIDEO_ID.find(videoUrl)?.groupValues?.get(1)?.let { "https://i.ytimg.com/vi/$it/hq720.jpg" }

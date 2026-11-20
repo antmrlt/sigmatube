@@ -1,6 +1,9 @@
 package app.sigmatube
 
 import android.app.Application
+import app.sigmatube.data.AppSettings
+import app.sigmatube.data.HiddenChannels
+import app.sigmatube.data.LocalHistory
 import app.sigmatube.data.YouTubeRepository
 import app.sigmatube.data.auth.AccountManager
 import app.sigmatube.data.auth.InnerTubeClient
@@ -56,4 +59,7 @@ class AppContainer(app: Application) {
     val playerManager = PlayerManager(app)
     val account = AccountManager(app)
     val innerTube = InnerTubeClient(httpClient, account)
+    val hiddenChannels = HiddenChannels(app)
+    val settings = AppSettings(app)
+    val history = LocalHistory(app, settings)
 }
