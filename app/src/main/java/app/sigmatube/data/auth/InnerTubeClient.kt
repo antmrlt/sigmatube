@@ -112,6 +112,159 @@ class InnerTubeClient(
     }
 
 
+    // region Comments (InnerTube: gives replies, sorting and the per-comment like tokens)
+
+    /** First page of comments for a video (works signed out; like tokens only when signed in). */
+    suspend fun comments(videoId: String): YtCommentsPage = withContext(Dispatchers.IO) {
+        val watch = post("next", JSONObject().put("videoId", videoId), requireAuth = false)
+        var token: String? = null
+        walk(watch) { key, obj ->
+            if (token == null && key == "itemSectionRenderer" && obj.optString("sectionIdentifier") == "comment-item-section") {
+                token = findFirst(obj, "continuationCommand")?.optString("token")?.takeIf { it.isNotEmpty() }
+            }
+        }
+        val t = token ?: return@withContext YtCommentsPage(emptyList(), null, emptyList(), null, disabled = true)
+        commentsPage(t)
+    }
+
+    /** A comments page (first page, a sort option, or the next page). */
+    suspend fun commentsPage(token: String): YtCommentsPage = withContext(Dispatchers.IO) {
+        val json = post("next", JSONObject().put("continuation", token), requireAuth = false)
+        val entities = entities(json)
+        val comments = mutableListOf<YtComment>()
+        var next: String? = null
+        val items = continuationItems(json)
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            item.optJSONObject("commentThreadRenderer")?.let { thread ->
+                val vm = findFirst(thread, "commentViewModel")?.let { it.optJSONObject("commentViewModel") ?: it }
+                val repliesToken = thread.optJSONObject("replies")?.let { r ->
+                    findFirst(r, "continuationCommand")?.optString("token")?.takeIf { it.isNotEmpty() }
+                }
+                vm?.let { parseComment(it, entities, repliesToken) }?.let(comments::add)
+            }
+            item.optJSONObject("continuationItemRenderer")?.let { c ->
+                findFirst(c, "continuationCommand")?.optString("token")?.takeIf { it.isNotEmpty() }?.let { next = it }
+            }
+        }
+        val sorts = mutableListOf<SortChip>()
+        walk(json) { key, obj ->
+            if (key != "sortFilterSubMenuRenderer" || sorts.isNotEmpty()) return@walk
+            val menu = obj.optJSONArray("subMenuItems") ?: return@walk
+            for (i in 0 until menu.length()) {
+                val it = menu.optJSONObject(i) ?: continue
+                val t = findFirst(it, "continuationCommand")?.optString("token").orEmpty()
+                if (t.isNotEmpty()) sorts += SortChip(it.optString("title"), t, it.optBoolean("selected"))
+            }
+        }
+        var count: String? = null
+        walk(json) { key, obj ->
+            if (count == null && key == "commentsHeaderRenderer") {
+                count = obj.optJSONObject("countText")?.let(::text) ?: obj.optJSONObject("commentsCount")?.let(::text)
+            }
+        }
+        YtCommentsPage(comments, next, sorts, count, disabled = false)
+    }
+
+    /** Replies of a comment, 10 at a time. */
+    suspend fun commentReplies(token: String): YtCommentsPage = withContext(Dispatchers.IO) {
+        val json = post("next", JSONObject().put("continuation", token), requireAuth = false)
+        val entities = entities(json)
+        val replies = mutableListOf<YtComment>()
+        var next: String? = null
+        val items = continuationItems(json)
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            item.optJSONObject("commentViewModel")?.let { parseComment(it, entities, null) }?.let(replies::add)
+            item.optJSONObject("continuationItemRenderer")?.let { c ->
+                findFirst(c, "continuationCommand")?.optString("token")?.takeIf { it.isNotEmpty() }?.let { next = it }
+            }
+        }
+        YtCommentsPage(replies, next, emptyList(), null, disabled = false)
+    }
+
+    /** Sends a like/dislike/undo action token from a comment's toolbar. */
+    suspend fun performCommentAction(action: String) = withContext(Dispatchers.IO) {
+        post("comment/perform_comment_action", JSONObject().put("actions", JSONArray().put(action)))
+        Unit
+    }
+
+    /** Adds a video to "À regarder plus tard". */
+    suspend fun addToWatchLater(videoId: String) = withContext(Dispatchers.IO) {
+        post(
+            "browse/edit_playlist",
+            JSONObject()
+                .put("playlistId", "WL")
+                .put("actions", JSONArray().put(JSONObject().put("addedVideoId", videoId).put("action", "ACTION_ADD_VIDEO"))),
+        )
+        Unit
+    }
+
+    private fun continuationItems(json: JSONObject): JSONArray {
+        val endpoints = json.optJSONArray("onResponseReceivedEndpoints") ?: return JSONArray()
+        val all = JSONArray()
+        for (i in 0 until endpoints.length()) {
+            val e = endpoints.optJSONObject(i) ?: continue
+            val items = e.optJSONObject("reloadContinuationItemsCommand")?.optJSONArray("continuationItems")
+                ?: e.optJSONObject("appendContinuationItemsAction")?.optJSONArray("continuationItems")
+                ?: continue
+            for (j in 0 until items.length()) all.put(items.get(j))
+        }
+        return all
+    }
+
+    /** frameworkUpdates mutations, indexed by entity key. */
+    private fun entities(json: JSONObject): Map<String, JSONObject> {
+        val map = HashMap<String, JSONObject>()
+        val mutations = json.optJSONObject("frameworkUpdates")?.optJSONObject("entityBatchUpdate")?.optJSONArray("mutations")
+            ?: return map
+        for (i in 0 until mutations.length()) {
+            val m = mutations.optJSONObject(i) ?: continue
+            val payload = m.optJSONObject("payload") ?: continue
+            val key = m.optString("entityKey")
+            payload.keys().forEach { k -> payload.optJSONObject(k)?.let { map[key.ifEmpty { it.optString("key") }] = it } }
+        }
+        return map
+    }
+
+    private fun parseComment(vm: JSONObject, entities: Map<String, JSONObject>, repliesToken: String?): YtComment? {
+        val entity = entities[vm.optString("commentKey")] ?: return null
+        val props = entity.optJSONObject("properties") ?: return null
+        val author = entity.optJSONObject("author")
+        val toolbar = entity.optJSONObject("toolbar")
+        val state = entities[vm.optString("toolbarStateKey")]
+        val surface = entities[vm.optString("toolbarSurfaceKey")]
+        fun action(name: String) = surface?.optJSONObject(name)?.let { findFirst(it, "performCommentActionEndpoint") }
+            ?.optString("action")?.takeIf { it.isNotEmpty() }
+        val likeState = when (state?.optString("likeState")) {
+            "TOOLBAR_LIKE_STATE_LIKED" -> LikeStatus.Like
+            "TOOLBAR_LIKE_STATE_DISLIKED" -> LikeStatus.Dislike
+            else -> LikeStatus.None
+        }
+        return YtComment(
+            id = props.optString("commentId"),
+            author = author?.optString("displayName").orEmpty(),
+            authorAvatar = author?.optString("avatarThumbnailUrl")?.takeIf { it.isNotEmpty() },
+            authorChannelId = author?.optString("channelId")?.takeIf { it.startsWith("UC") },
+            isCreator = author?.optBoolean("isCreator") == true,
+            isVerified = author?.optBoolean("isVerified") == true,
+            text = props.optJSONObject("content")?.optString("content").orEmpty(),
+            publishedText = props.optString("publishedTime"),
+            likeCountText = toolbar?.optString("likeCountNotliked")?.takeIf { it.isNotBlank() },
+            replyCountText = toolbar?.optString("replyCount")?.takeIf { it.isNotBlank() && it != "0" },
+            repliesToken = repliesToken,
+            isHearted = state?.optString("heartState") == "TOOLBAR_HEART_STATE_HEARTED",
+            isPinned = vm.has("pinnedText"),
+            likeState = likeState,
+            likeAction = action("likeCommand"),
+            unlikeAction = action("unlikeCommand"),
+            dislikeAction = action("dislikeCommand"),
+            undislikeAction = action("undislikeCommand"),
+        )
+    }
+
+    // endregion
+
     // region Channels
 
     suspend fun channelPage(channelId: String): ChannelPage = withContext(Dispatchers.IO) {

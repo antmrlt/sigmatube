@@ -116,7 +116,7 @@ fun SigmaNavHost(
     val showBottomBar = listOf(SearchRoute::class, LoginRoute::class, SettingsRoute::class).none { destination?.hasRoute(it) == true }
 
     // Activity-scoped (we're outside any NavHost destination here).
-    val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account, container.settings, container.history) }
+    val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account, container.settings, container.history, container.hiddenChannels) }
     val watchState by watch.state.collectAsStateWithLifecycle()
     val sheet = remember { WatchSheetState() }
     val scope = rememberCoroutineScope()

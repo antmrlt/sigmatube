@@ -21,6 +21,8 @@ data class Settings(
     val hideLives: Boolean = true,
     val pauseWatchHistory: Boolean = false,
     val pauseSearchHistory: Boolean = false,
+    val autoplay: Boolean = true,
+    val captions: Boolean = false,
 )
 
 /** User preferences, persisted in SharedPreferences and observable from the UI. */
@@ -39,6 +41,8 @@ class AppSettings(private val context: Context) {
         hideLives = prefs.getBoolean("hideLives", true),
         pauseWatchHistory = prefs.getBoolean("pauseWatchHistory", false),
         pauseSearchHistory = prefs.getBoolean("pauseSearchHistory", false),
+        autoplay = prefs.getBoolean("autoplay", true),
+        captions = prefs.getBoolean("captions", false),
     )
 
     fun update(transform: (Settings) -> Settings) {
@@ -52,6 +56,8 @@ class AppSettings(private val context: Context) {
             .putBoolean("hideLives", s.hideLives)
             .putBoolean("pauseWatchHistory", s.pauseWatchHistory)
             .putBoolean("pauseSearchHistory", s.pauseSearchHistory)
+            .putBoolean("autoplay", s.autoplay)
+            .putBoolean("captions", s.captions)
             .apply()
         _state.value = s
     }

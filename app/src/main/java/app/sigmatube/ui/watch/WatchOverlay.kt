@@ -95,6 +95,8 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sigmatube.data.VideoItem
 import app.sigmatube.ui.components.Thumbnail
+import app.sigmatube.ui.components.shareVideo
+import app.sigmatube.data.auth.LikeStatus
 import app.sigmatube.ui.components.userMessage
 import app.sigmatube.ui.theme.Accent
 import coil3.compose.AsyncImage
@@ -144,13 +146,53 @@ fun WatchOverlay(
     val scope = rememberCoroutineScope()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val ui = rememberPlayerUiState(viewModel.player)
+    val commentActions = remember(viewModel) {
+        CommentActions(
+            loadMore = viewModel::loadMoreComments,
+            sort = viewModel::sortComments,
+            toggleReplies = viewModel::toggleReplies,
+            moreReplies = viewModel::loadMoreReplies,
+            rate = { comment, target ->
+                if (!viewModel.rateComment(comment, target)) {
+                    Toast.makeText(context, "Connecte-toi pour noter les commentaires", Toast.LENGTH_SHORT).show()
+                    onLoginRequired()
+                }
+            },
+        )
+    }
     val details = state.details
 
     var panel by remember { mutableStateOf(WatchPanel.None) }
     var showSettings by remember { mutableStateOf(false) }
     var showRecommendations by remember { mutableStateOf(false) }
     var showSideComments by remember { mutableStateOf(false) }
+    var openRecommendationsRequest by remember { mutableStateOf(0) }
     val listState = rememberLazyListState()
+    val playerSettings by viewModel.settingsState.collectAsStateWithLifecycle()
+    var openCommentsRequest by remember { mutableStateOf(0) }
+    val related = details?.related.orEmpty()
+    fun loginToast(text: String) {
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        onLoginRequired()
+    }
+    val playerActions = PlayerActions(
+        channel = details?.channelName,
+        autoplay = playerSettings.autoplay,
+        onAutoplay = viewModel::setAutoplay,
+        captionsOn = playerSettings.captions,
+        onCaptions = viewModel::toggleCaptions,
+        onPrevious = viewModel::previous,
+        onNext = viewModel::next,
+        hasNext = related.any { !it.isLive },
+        likeStatus = state.likeStatus,
+        onLike = { if (!viewModel.toggleRating(LikeStatus.Like)) loginToast("Connecte-toi pour noter les vidéos") },
+        onDislike = { if (!viewModel.toggleRating(LikeStatus.Dislike)) loginToast("Connecte-toi pour noter les vidéos") },
+        onComments = { openCommentsRequest++ },
+        onSave = { if (!viewModel.saveToWatchLater()) loginToast("Connecte-toi pour enregistrer des vidéos") },
+        onShare = { details?.let { shareVideo(context, it.title, it.url) } },
+        nextThumbnail = related.firstOrNull()?.thumbnail,
+        onMoreVideos = { openRecommendationsRequest++ },
+    )
 
     // Floating mini-player: which corner it rests in, and the live drag offset from that corner.
     var corner by remember { mutableStateOf(Corner.BottomEnd) }
@@ -162,6 +204,13 @@ fun WatchOverlay(
         showRecommendations = false
         floatOffset.snapTo(Offset.Zero)
         listState.scrollToItem(0)
+    }
+    LaunchedEffect(openCommentsRequest) {
+        if (openCommentsRequest == 0) return@LaunchedEffect
+        if (isLandscape) { showRecommendations = false; showSideComments = !showSideComments } else panel = WatchPanel.Comments
+    }
+    LaunchedEffect(openRecommendationsRequest) {
+        if (openRecommendationsRequest > 0 && isLandscape) { showSideComments = false; showRecommendations = true }
     }
     LaunchedEffect(isLandscape) {
         if (isLandscape) sheet.progress = 0f else { showRecommendations = false; showSideComments = false }
@@ -255,7 +304,7 @@ fun WatchOverlay(
                     PlayerSlot(viewModel, state, ui, interactive = true, isFullscreen = true,
                         onToggleFullscreen = { setFullscreen(false) }, onMinimize = { setFullscreen(false) },
                         onSettings = { showSettings = true },
-                        onComments = { showRecommendations = false; showSideComments = !showSideComments },
+                        actions = playerActions,
                         modifier = Modifier.fillMaxSize())
                     FullscreenRecommendations(
                         visible = showRecommendations && !showSideComments,
@@ -272,7 +321,7 @@ fun WatchOverlay(
                 ) {
                     SideCommentsPanel(
                         comments = state.comments,
-                        onLoadMore = viewModel::loadMoreComments,
+                        actions = commentActions,
                         onClose = { showSideComments = false },
                         modifier = Modifier.fillMaxHeight().width(with(density) { (w * 0.4f).toDp() }),
                     )
@@ -301,7 +350,7 @@ fun WatchOverlay(
                             panel = panel,
                             listState = listState,
                             onPanelChange = { panel = it },
-                            onLoadMoreComments = viewModel::loadMoreComments,
+                            commentActions = commentActions,
                             onVideoClick = { onOpenVideo(it.url) },
                             onChannelClick = { url -> minimize(); onChannelClick(url) },
                             likeStatus = state.likeStatus,
@@ -394,7 +443,7 @@ fun WatchOverlay(
         ) {
             PlayerSlot(viewModel, state, ui, interactive = p == 0f, isFullscreen = false,
                 onToggleFullscreen = { setFullscreen(true) }, onMinimize = { minimize() },
-                onSettings = { showSettings = true }, modifier = Modifier.fillMaxSize())
+                onSettings = { showSettings = true }, actions = playerActions, modifier = Modifier.fillMaxSize())
         }
     }
 
@@ -425,7 +474,7 @@ private fun PlayerSlot(
     onMinimize: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier,
-    onComments: (() -> Unit)? = null,
+    actions: PlayerActions? = null,
 ) {
     val details = state.details
     when {
@@ -458,7 +507,7 @@ private fun PlayerSlot(
             onSettings = onSettings,
             onRetry = viewModel::retry,
             modifier = modifier,
-            onComments = onComments,
+            actions = actions,
         )
     }
 }
@@ -542,7 +591,7 @@ private fun lerpF(a: Float, b: Float, t: Float) = a + (b - a) * t
 @Composable
 private fun SideCommentsPanel(
     comments: CommentsState,
-    onLoadMore: () -> Unit,
+    actions: CommentActions,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -552,9 +601,9 @@ private fun SideCommentsPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Commentaires", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
-            if (comments.totalCount > 0) {
+            if (comments.countText != null) {
                 Text(
-                    "  ${app.sigmatube.util.Format.compact(comments.totalCount.toLong())}",
+                    "  ${comments.countText}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
@@ -565,6 +614,6 @@ private fun SideCommentsPanel(
             IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Fermer") }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        CommentsList(comments, onLoadMore)
+        CommentsList(comments, actions)
     }
 }

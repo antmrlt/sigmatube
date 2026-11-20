@@ -5,6 +5,28 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.ClosedCaption
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.rounded.CloseFullscreen
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import app.sigmatube.data.auth.LikeStatus
+import coil3.compose.AsyncImage
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -130,7 +152,7 @@ fun VideoPlayer(
     onSettings: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    onComments: (() -> Unit)? = null,
+    actions: PlayerActions? = null,
 ) {
     val seekMs = LocalSeekMs.current
     var controlsVisible by remember { mutableStateOf(true) }
@@ -223,7 +245,7 @@ fun VideoPlayer(
                 onToggleFullscreen = onToggleFullscreen,
                 onMinimize = onMinimize,
                 onSettings = onSettings,
-                onComments = onComments,
+                actions = actions,
                 onInteraction = { interactionTick++ },
             )
         }
@@ -254,10 +276,31 @@ fun VideoPlayer(
             },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = if (isFullscreen) 24.dp else 0.dp, vertical = if (isFullscreen) 24.dp else 0.dp),
+                .padding(horizontal = if (isFullscreen) 24.dp else 0.dp)
+                .padding(bottom = if (isFullscreen) 64.dp else 0.dp),
         )
     }
 }
+
+/** Everything the YouTube-style controls can trigger (null pieces simply hide their button). */
+class PlayerActions(
+    val channel: String?,
+    val autoplay: Boolean,
+    val onAutoplay: (Boolean) -> Unit,
+    val captionsOn: Boolean,
+    val onCaptions: () -> Unit,
+    val onPrevious: () -> Unit,
+    val onNext: () -> Unit,
+    val hasNext: Boolean,
+    val likeStatus: LikeStatus,
+    val onLike: () -> Unit,
+    val onDislike: () -> Unit,
+    val onComments: () -> Unit,
+    val onSave: () -> Unit,
+    val onShare: () -> Unit,
+    val nextThumbnail: String?,
+    val onMoreVideos: () -> Unit,
+)
 
 @Composable
 private fun Controls(
@@ -266,14 +309,15 @@ private fun Controls(
     title: String?,
     isFullscreen: Boolean,
     scrubFraction: Float?,
+    actions: PlayerActions?,
     onToggleFullscreen: () -> Unit,
     onMinimize: () -> Unit,
     onSettings: () -> Unit,
-    onComments: (() -> Unit)?,
     onInteraction: () -> Unit,
 ) {
-    val seekMs = LocalSeekMs.current
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+    fun act(block: () -> Unit) { block(); onInteraction() }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f))) {
+        // Top bar: ⌄ (+ title/channel in fullscreen) … autoplay · CC · settings
         Row(
             Modifier
                 .align(Alignment.TopStart)
@@ -284,27 +328,37 @@ private fun Controls(
             IconButton(onClick = if (isFullscreen) onToggleFullscreen else onMinimize) {
                 Icon(Icons.Rounded.KeyboardArrowDown, "Réduire", tint = Color.White, modifier = Modifier.size(30.dp))
             }
-            Text(
-                title.orEmpty(),
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = { onSettings(); onInteraction() }) {
-                Icon(Icons.Outlined.Settings, "Paramètres", tint = Color.White, modifier = Modifier.size(24.dp))
+            Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                if (title != null) {
+                    Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    actions?.channel?.let {
+                        Text(it, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    }
+                }
+            }
+            if (actions != null) {
+                AutoplaySwitch(actions.autoplay) { act { actions.onAutoplay(!actions.autoplay) } }
+                IconButton(onClick = { act(actions.onCaptions) }) {
+                    Icon(
+                        if (actions.captionsOn) Icons.Filled.ClosedCaption else Icons.Outlined.ClosedCaption,
+                        "Sous-titres",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+            }
+            IconButton(onClick = { act(onSettings) }) {
+                Icon(Icons.Outlined.Settings, "Paramètres", tint = Color.White, modifier = Modifier.size(26.dp))
             }
         }
 
+        // Center: previous · play/pause · next
         Row(
             Modifier.align(Alignment.Center),
-            horizontalArrangement = Arrangement.spacedBy(if (isFullscreen) 64.dp else 40.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (isFullscreen) 88.dp else 48.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            RoundIcon(Icons.Rounded.Replay10, "Reculer de 10 s", 52.dp) {
-                player.seekBy(-seekMs); onInteraction()
-            }
+            RoundIcon(Icons.Rounded.SkipPrevious, "Précédente", 48.dp) { act { actions?.onPrevious?.invoke() ?: player.seekTo(0) } }
             if (ui.isBuffering) {
                 Box(Modifier.size(64.dp))
             } else {
@@ -314,27 +368,32 @@ private fun Controls(
                     else -> Icons.Rounded.PlayArrow to "Lecture"
                 }
                 RoundIcon(icon, label, 64.dp) {
-                    when {
-                        ui.isEnded -> player.seekTo(0)
-                        ui.isPlaying -> player.pause()
-                        else -> player.play()
+                    act {
+                        when {
+                            ui.isEnded -> player.seekTo(0)
+                            ui.isPlaying -> player.pause()
+                            else -> player.play()
+                        }
                     }
-                    onInteraction()
                 }
             }
-            RoundIcon(Icons.Rounded.Forward10, "Avancer de 10 s", 52.dp) {
-                player.seekBy(seekMs); onInteraction()
-            }
+            RoundIcon(
+                Icons.Rounded.SkipNext,
+                "Suivante",
+                48.dp,
+                enabled = actions?.hasNext == true,
+            ) { act { actions?.onNext?.invoke() } }
         }
 
+        // Time pill (left) and fullscreen toggle (right), just above the seek bar.
         Row(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .padding(
-                    start = if (isFullscreen) 32.dp else 16.dp,
-                    end = if (isFullscreen) 24.dp else 4.dp,
-                    bottom = if (isFullscreen) 40.dp else 8.dp,
+                    start = if (isFullscreen) 24.dp else 12.dp,
+                    end = if (isFullscreen) 20.dp else 4.dp,
+                    bottom = if (isFullscreen) 84.dp else 10.dp,
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -343,21 +402,102 @@ private fun Controls(
                 "${Format.position(shown)} / ${Format.position(ui.duration)}",
                 color = Color.White,
                 style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             )
-            if (isFullscreen && onComments != null) {
-                IconButton(onClick = { onComments(); onInteraction() }) {
-                    Icon(Icons.Outlined.Comment, "Commentaires", tint = Color.White, modifier = Modifier.size(26.dp))
-                }
-            }
+            Spacer(Modifier.weight(1f))
             IconButton(onClick = onToggleFullscreen) {
                 Icon(
-                    if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                    if (isFullscreen) Icons.Rounded.CloseFullscreen else Icons.Rounded.OpenInFull,
                     if (isFullscreen) "Quitter le plein écran" else "Plein écran",
                     tint = Color.White,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
+        }
+
+        // Fullscreen only: action pill (like · dislike · comments · save · share · more) + "Autres vidéos".
+        if (isFullscreen && actions != null) {
+            Row(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 20.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BarIcon(if (actions.likeStatus == LikeStatus.Like) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, "J'aime") {
+                        act(actions.onLike)
+                    }
+                    BarIcon(if (actions.likeStatus == LikeStatus.Dislike) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown, "Je n'aime pas") {
+                        act(actions.onDislike)
+                    }
+                    BarIcon(Icons.Outlined.Comment, "Commentaires") { act(actions.onComments) }
+                    BarIcon(Icons.Outlined.BookmarkBorder, "Enregistrer") { act(actions.onSave) }
+                    BarIcon(Icons.AutoMirrored.Outlined.Reply, "Partager", Modifier.graphicsLayer(scaleX = -1f)) { act(actions.onShare) }
+                    BarIcon(Icons.Rounded.MoreHoriz, "Plus") { act(onSettings) }
+                }
+                Spacer(Modifier.weight(1f))
+                if (actions.nextThumbnail != null) {
+                    Row(
+                        Modifier.clip(RoundedCornerShape(10.dp)).clickable { act(actions.onMoreVideos) }.padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Autres vidéos", color = Color.White, style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.width(12.dp))
+                        AsyncImage(
+                            actions.nextThumbnail,
+                            null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(width = 64.dp, height = 36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(2.dp, Color.White, RoundedCornerShape(8.dp)),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BarIcon(icon: ImageVector, label: String, iconModifier: Modifier = Modifier, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(icon, label, tint = Color.White, modifier = iconModifier.size(24.dp))
+    }
+}
+
+/** YouTube's autoplay pill: grey track, white knob with ▶ (on) or ⏸ (off). */
+@Composable
+private fun AutoplaySwitch(enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .padding(horizontal = 6.dp)
+            .size(width = 40.dp, height = 22.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.35f))
+            .clickable(onClick = onClick),
+        contentAlignment = if (enabled) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier.padding(horizontal = 1.dp).size(22.dp).background(Color.White, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (enabled) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                if (enabled) "Lecture automatique activée" else "Lecture automatique désactivée",
+                tint = Color.Black,
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }
@@ -409,15 +549,15 @@ private fun SeekBar(
 }
 
 @Composable
-private fun RoundIcon(icon: ImageVector, label: String, size: Dp, onClick: () -> Unit) {
+private fun RoundIcon(icon: ImageVector, label: String, size: Dp, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         Modifier
             .size(size)
             .background(Color.Black.copy(alpha = 0.3f), CircleShape)
-            .clickable(onClick = onClick, interactionSource = remember { MutableInteractionSource() }, indication = null),
+            .clickable(enabled = enabled, onClick = onClick, interactionSource = remember { MutableInteractionSource() }, indication = null),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, label, tint = Color.White, modifier = Modifier.size(size * 0.62f))
+        Icon(icon, label, tint = Color.White.copy(alpha = if (enabled) 1f else 0.4f), modifier = Modifier.size(size * 0.62f))
     }
 }
 

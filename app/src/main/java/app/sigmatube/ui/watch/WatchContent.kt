@@ -62,7 +62,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.sigmatube.data.Comment
 import app.sigmatube.data.VideoDetails
 import app.sigmatube.data.LocalHiddenChannels
 import app.sigmatube.data.VideoItem
@@ -91,7 +90,7 @@ fun WatchContent(
     panel: WatchPanel,
     listState: LazyListState,
     onPanelChange: (WatchPanel) -> Unit,
-    onLoadMoreComments: () -> Unit,
+    commentActions: CommentActions,
     onVideoClick: (VideoItem) -> Unit,
     onChannelClick: (String) -> Unit,
     likeStatus: LikeStatus,
@@ -123,15 +122,11 @@ fun WatchContent(
         ) {
             Panel(
                 title = if (lastPanel == WatchPanel.Comments) "Commentaires" else "Description",
-                subtitle = if (lastPanel == WatchPanel.Comments && comments.totalCount > 0) {
-                    Format.compact(comments.totalCount.toLong())
-                } else {
-                    null
-                },
+                subtitle = if (lastPanel == WatchPanel.Comments) comments.countText else null,
                 onClose = { onPanelChange(WatchPanel.None) },
             ) {
                 when (lastPanel) {
-                    WatchPanel.Comments -> CommentsList(comments, onLoadMoreComments)
+                    WatchPanel.Comments -> CommentsList(comments, commentActions)
                     else -> DescriptionContent(details, onChannelClick)
                 }
             }
@@ -319,9 +314,9 @@ private fun CommentsTeaser(comments: CommentsState, onClick: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text("Commentaires", style = MaterialTheme.typography.titleSmall)
-            if (comments.totalCount > 0) {
+            if (comments.countText != null) {
                 Text(
-                    "  ${Format.compact(comments.totalCount.toLong())}",
+                    "  ${comments.countText}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -392,73 +387,6 @@ private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
     }
 }
 
-@Composable
-fun CommentsList(state: CommentsState, onLoadMore: () -> Unit) {
-    val listState = rememberLazyListState()
-    LoadMoreEffect(listState, onLoadMore = onLoadMore)
-    if (state.isLoading) {
-        ListFooterLoader()
-        return
-    }
-    if (state.comments.isEmpty()) {
-        Text(
-            if (state.disabled) "Les commentaires sont désactivés." else "Aucun commentaire.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(16.dp),
-        )
-        return
-    }
-    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
-        items(state.comments, key = { it.id }) { CommentRow(it) }
-        if (state.isLoadingMore) item { ListFooterLoader() }
-        item { Spacer(Modifier.navigationBarsPadding()) }
-    }
-}
-
-@Composable
-private fun CommentRow(comment: Comment) {
-    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        Avatar(comment.authorAvatar, 28.dp)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            if (comment.isPinned) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.PushPin, null, Modifier.size(12.dp), tint = secondary)
-                    Text(" Épinglé", style = MaterialTheme.typography.labelSmall, color = secondary)
-                }
-            }
-            Text(
-                Format.meta(comment.author, Format.relative(comment.uploadDate, comment.uploadedText)),
-                style = MaterialTheme.typography.bodySmall,
-                color = secondary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(comment.text, style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Outlined.ThumbUp, null, Modifier.size(16.dp), tint = secondary)
-                if (comment.likeCount > 0) {
-                    Text(Format.compact(comment.likeCount.toLong()), style = MaterialTheme.typography.bodySmall, color = secondary)
-                }
-                Spacer(Modifier.width(12.dp))
-                Icon(Icons.Outlined.ThumbDown, null, Modifier.size(16.dp), tint = secondary)
-                if (comment.isHearted) {
-                    Spacer(Modifier.width(12.dp))
-                    Icon(Icons.Rounded.Favorite, "Adoré par le créateur", Modifier.size(16.dp), tint = Accent)
-                }
-            }
-            if (comment.replyCount > 0) {
-                Text(
-                    "${comment.replyCount} réponse${if (comment.replyCount > 1) "s" else ""}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
-        }
-    }
-}
 
 /** Like | dislike split pill; filled icons reflect the user's rating. */
 @Composable
