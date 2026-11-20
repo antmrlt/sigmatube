@@ -44,6 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.sigmatube.data.VideoItem
+import app.sigmatube.data.LocalWatchProgress
+import app.sigmatube.data.videoIdOf
+import androidx.compose.foundation.layout.fillMaxHeight
 import app.sigmatube.data.auth.PlaylistItem
 import app.sigmatube.ui.theme.Accent
 import app.sigmatube.util.Format
@@ -67,6 +70,8 @@ fun Thumbnail(video: VideoItem, modifier: Modifier = Modifier, shape: Shape = Re
             error = fallback,
             modifier = Modifier.matchParentSize(),
         )
+        // Watched fraction: from this device first, otherwise what the account feed reported.
+        val progress = LocalWatchProgress.current[videoIdOf(video.url)] ?: video.watchedFraction
         val badge = if (video.isLive) "EN DIRECT" else Format.duration(video.durationSeconds)
         if (badge != null) {
             Text(
@@ -76,10 +81,22 @@ fun Thumbnail(video: VideoItem, modifier: Modifier = Modifier, shape: Shape = Re
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
+                    .padding(bottom = if (progress != null && progress > 0f) 4.dp else 0.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(if (video.isLive) Accent else Color.Black.copy(alpha = 0.8f))
                     .padding(horizontal = 4.dp, vertical = 1.dp),
             )
+        }
+        if (progress != null && progress > 0f && !video.isLive) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(Color.White.copy(alpha = 0.35f)),
+            ) {
+                Box(Modifier.fillMaxWidth(progress.coerceIn(0.03f, 1f)).fillMaxHeight().background(Accent))
+            }
         }
     }
 }
@@ -280,8 +297,6 @@ fun VerifiedBadge(modifier: Modifier = Modifier) {
     )
 }
 
-private val VIDEO_ID = Regex("""(?:v=|youtu\.be/|/shorts/|/live/)([A-Za-z0-9_-]{11})""")
-
 /** High-resolution 16:9 thumbnail (no letterboxing), available for most videos. */
 fun hqThumbnailUrl(videoUrl: String): String? =
-    VIDEO_ID.find(videoUrl)?.groupValues?.get(1)?.let { "https://i.ytimg.com/vi/$it/hq720.jpg" }
+    videoIdOf(videoUrl)?.let { "https://i.ytimg.com/vi/$it/hq720.jpg" }

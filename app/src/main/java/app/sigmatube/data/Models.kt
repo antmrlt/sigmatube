@@ -17,6 +17,8 @@ data class VideoItem(
     val isLive: Boolean,
     /** Pre-formatted views ("1,2 M de vues") when only text is available (account feeds). */
     val viewsText: String? = null,
+    /** Watched fraction reported by YouTube for the signed-in account (feeds only). */
+    val watchedFraction: Float? = null,
 )
 
 data class FeedCategory(val id: String, val label: String)

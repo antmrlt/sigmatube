@@ -57,6 +57,7 @@ import app.sigmatube.ui.watch.WatchOverlay
 import app.sigmatube.ui.playlist.PlaylistScreen
 import app.sigmatube.ui.playlist.PlaylistViewModel
 import app.sigmatube.data.LocalHiddenChannels
+import app.sigmatube.data.LocalWatchProgress
 import androidx.compose.runtime.CompositionLocalProvider
 import app.sigmatube.ui.watch.WatchSheetState
 import app.sigmatube.ui.watch.WatchViewModel
@@ -116,7 +117,7 @@ fun SigmaNavHost(
     val showBottomBar = listOf(SearchRoute::class, LoginRoute::class, SettingsRoute::class).none { destination?.hasRoute(it) == true }
 
     // Activity-scoped (we're outside any NavHost destination here).
-    val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account, container.settings, container.history, container.hiddenChannels) }
+    val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account, container.settings, container.history, container.hiddenChannels, container.watchProgress) }
     val watchState by watch.state.collectAsStateWithLifecycle()
     val sheet = remember { WatchSheetState() }
     val scope = rememberCoroutineScope()
@@ -139,6 +140,7 @@ fun SigmaNavHost(
 
     val hiddenChannels by container.hiddenChannels.ids.collectAsStateWithLifecycle()
     val settingsState by container.settings.state.collectAsStateWithLifecycle()
+    val watchedFractions by container.watchProgress.fractions.collectAsStateWithLifecycle()
     val cookies by container.account.cookies.collectAsStateWithLifecycle()
     val accountInfo by produceState<AccountInfo?>(null, cookies) {
         value = if (cookies != null) container.innerTube.accountInfo() else null
@@ -146,6 +148,7 @@ fun SigmaNavHost(
 
     CompositionLocalProvider(
         LocalHiddenChannels provides hiddenChannels,
+        LocalWatchProgress provides watchedFractions,
         LocalSeekMs provides settingsState.seekSeconds * 1000L,
     ) {
     Box(Modifier.fillMaxSize()) {

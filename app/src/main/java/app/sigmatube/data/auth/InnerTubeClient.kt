@@ -539,6 +539,8 @@ class InnerTubeClient(
                 ?: videoInfo?.getOrNull(0),
             uploadDate = null,
             uploadedText = o.optJSONObject("publishedTimeText")?.let(::text) ?: videoInfo?.getOrNull(1),
+            watchedFraction = findFirst(o, "thumbnailOverlayResumePlaybackRenderer")
+                ?.optInt("percentDurationWatched", -1)?.takeIf { it > 0 }?.let { it / 100f },
             isLive = isLive,
         )
     }
@@ -577,6 +579,8 @@ class InnerTubeClient(
             uploadDate = null,
             uploadedText = stats.getOrNull(1),
             isLive = isLive,
+            watchedFraction = findFirst(o, "thumbnailOverlayProgressBarViewModel")
+                ?.optInt("startPercent", -1)?.takeIf { it > 0 }?.let { it / 100f },
         )
     }
 

@@ -7,6 +7,7 @@ import app.sigmatube.data.AppSettings
 import app.sigmatube.data.HiddenChannels
 import app.sigmatube.data.LocalHistory
 import app.sigmatube.data.VideoDetails
+import app.sigmatube.data.WatchProgress
 import app.sigmatube.data.VideoItem
 import app.sigmatube.data.YouTubeRepository
 import app.sigmatube.data.auth.AccountManager
@@ -75,6 +76,7 @@ class WatchViewModel(
     private val settings: AppSettings,
     private val history: LocalHistory,
     private val hiddenChannels: HiddenChannels,
+    private val watchProgress: WatchProgress,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(WatchState(speed = settings.state.value.defaultSpeed))
@@ -92,6 +94,7 @@ class WatchViewModel(
     private val autoplayListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             val s = _state.value
+            if (playbackState == Player.STATE_ENDED) s.details?.url?.let { watchProgress.save(it, player.duration, player.duration) }
             if (playbackState == Player.STATE_ENDED && !s.loop && settings.state.value.autoplay &&
                 playerManager.currentUrl == s.details?.url
             ) {
@@ -100,8 +103,24 @@ class WatchViewModel(
         }
     }
 
+    /** Remembers how far the current video got (thumbnail bar + resume). */
+    private fun saveProgress() {
+        val url = _state.value.details?.url ?: return
+        if (playerManager.currentUrl != url) return
+        watchProgress.save(url, player.currentPosition, player.duration)
+    }
+
     init {
         player.addListener(autoplayListener)
+        player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) { if (!isPlaying) saveProgress() }
+        })
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(5_000)
+                if (player.isPlaying) saveProgress()
+            }
+        }
         // Signed in/out while a video is open: refresh its rating and comment actions.
         viewModelScope.launch {
             account.cookies.drop(1).collect { cookies ->
@@ -119,6 +138,7 @@ class WatchViewModel(
         val current = _state.value.url
         if (url == current && _state.value.error == null) return
         if (pushHistory && current != null) backStack.addLast(current)
+        saveProgress()
         loadJob?.cancel()
         commentsJob?.cancel()
         playerManager.stop(this)
@@ -131,7 +151,7 @@ class WatchViewModel(
                 hasPrevious = backStack.isNotEmpty(),
             )
         }
-        load(url, startPositionMs = 0)
+        load(url, startPositionMs = watchProgress.resumePosition(url))
         loadComments(url)
         loadLikeStatus(url)
     }
@@ -214,6 +234,7 @@ class WatchViewModel(
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
     fun close() {
+        saveProgress()
         loadJob?.cancel()
         commentsJob?.cancel()
         playerManager.stop(this)
@@ -304,12 +325,16 @@ class WatchViewModel(
 
     private fun YtCommentsPage.toState() = CommentsState(
         comments = comments,
-        countText = countText,
+        countText = countText?.let(::compactCount),
         nextToken = nextToken,
         sorts = sorts,
         disabled = disabled,
         isLoading = false,
     )
+
+    /** "2,462,453 Comments" -> "2,5 M" (YouTube's header text isn't localised). */
+    private fun compactCount(text: String): String =
+        text.filter(Char::isDigit).toLongOrNull()?.let { app.sigmatube.util.Format.compact(it) } ?: text
 
     fun sortComments(chip: SortChip) {
         if (chip.selected) return
@@ -325,7 +350,7 @@ class WatchViewModel(
                     _state.update {
                         it.copy(comments = page.toState().copy(
                             sorts = it.comments.sorts,
-                            countText = page.countText ?: it.comments.countText,
+                            countText = page.countText?.let(::compactCount) ?: it.comments.countText,
                         ))
                     }
                 }
@@ -448,11 +473,15 @@ class WatchViewModel(
         durationSeconds = durationSeconds,
         viewCount = viewCount,
         uploadDate = uploadDate,
-        uploadedText = uploadedText,
+        // Stored as text in the local history, so keep the relative form ("il y a 3 jours").
+        uploadedText = app.sigmatube.util.Format.relative(uploadDate, uploadedText),
         isLive = isLive,
     )
 
-    fun pause() = playerManager.pause(this)
+    fun pause() {
+        saveProgress()
+        playerManager.pause(this)
+    }
 
     override fun onCleared() {
         player.removeListener(autoplayListener)
