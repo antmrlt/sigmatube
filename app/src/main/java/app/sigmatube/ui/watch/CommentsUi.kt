@@ -1,5 +1,6 @@
 package app.sigmatube.ui.watch
 
+import app.sigmatube.ui.theme.AppIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
@@ -66,6 +67,9 @@ import app.sigmatube.ui.components.Avatar
 import app.sigmatube.ui.components.ListFooterLoader
 import app.sigmatube.ui.components.LoadMoreEffect
 import app.sigmatube.ui.theme.Accent
+import app.sigmatube.ui.components.rememberPopScale
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.graphics.graphicsLayer
 
 /** Everything the comments UI can trigger. */
 class CommentActions(
@@ -328,12 +332,13 @@ private fun RateButton(liked: Boolean, up: Boolean, count: String?, onClick: () 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val icon = when {
-            up && liked -> Icons.Filled.ThumbUp
-            up -> Icons.Outlined.ThumbUp
-            liked -> Icons.Filled.ThumbDown
-            else -> Icons.Outlined.ThumbDown
+            up && liked -> AppIcons.ThumbUpFilled
+            up -> AppIcons.ThumbUp
+            liked -> AppIcons.ThumbDownFilled
+            else -> AppIcons.ThumbDown
         }
-        Icon(icon, if (up) "J'aime" else "Je n'aime pas", Modifier.size(16.dp))
+        val pop = rememberPopScale(liked, enabled = liked)
+        Icon(icon, if (up) "J'aime" else "Je n'aime pas", Modifier.size(16.dp).graphicsLayer { scaleX = pop; scaleY = pop })
         if (count != null) {
             Spacer(Modifier.width(6.dp))
             Text(count, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -344,15 +349,17 @@ private fun RateButton(liked: Boolean, up: Boolean, count: String?, onClick: () 
 @Composable
 private fun SortChipView(chip: SortChip, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val bg by animateColorAsState(if (chip.selected) colors.primary else colors.surfaceContainerHigh, label = "sortBg")
+    val fg by animateColorAsState(if (chip.selected) colors.onPrimary else colors.onSurface, label = "sortFg")
     Text(
         chip.label,
         style = MaterialTheme.typography.labelLarge,
-        color = if (chip.selected) colors.onPrimary else colors.onSurface,
+        color = fg,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (chip.selected) colors.primary else colors.surfaceContainerHigh)
+            .clip(CircleShape)
+            .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     )
 }
 

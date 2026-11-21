@@ -1,5 +1,6 @@
 package app.sigmatube.ui.components
 
+import app.sigmatube.ui.theme.AppIcons
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -82,9 +83,9 @@ fun Thumbnail(video: VideoItem, modifier: Modifier = Modifier, shape: Shape = Re
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
                     .padding(bottom = if (progress != null && progress > 0f) 4.dp else 0.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(if (video.isLive) Accent else Color.Black.copy(alpha = 0.8f))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (video.isLive) Accent else Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
         if (progress != null && progress > 0f && !video.isLive) {
@@ -130,12 +131,12 @@ fun VideoMenuButton(video: VideoItem, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         IconButton(onClick = { open = true }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Rounded.MoreVert, "Plus d'options", Modifier.size(20.dp))
+            Icon(AppIcons.MoreVert, "Plus d'options", Modifier.size(20.dp))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
                 text = { Text("Partager") },
-                leadingIcon = { Icon(Icons.Outlined.Share, null) },
+                leadingIcon = { Icon(AppIcons.Share, null) },
                 onClick = {
                     open = false
                     shareVideo(context, video.title, video.url)
@@ -156,11 +157,11 @@ fun VideoCard(
     Column(
         modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(bottom = 20.dp),
+            .bouncyClickable(pressedScale = 0.975f, onClick = onClick)
+            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 20.dp),
     ) {
-        Thumbnail(video, Modifier.fillMaxWidth())
-        Row(Modifier.padding(start = 12.dp, top = 12.dp)) {
+        Thumbnail(video, Modifier.fillMaxWidth(), RoundedCornerShape(16.dp))
+        Row(Modifier.padding(start = 2.dp, top = 12.dp)) {
             if (onChannelClick != null) {
                 Avatar(video.channelAvatar, 36.dp, Modifier.clickable(onClick = onChannelClick))
                 Spacer(Modifier.width(12.dp))
@@ -185,7 +186,7 @@ fun VideoCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            VideoMenuButton(video, Modifier.padding(end = 4.dp))
+            VideoMenuButton(video, Modifier.padding(start = 4.dp))
         }
     }
 }
@@ -196,11 +197,11 @@ fun VideoRow(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifie
     Row(
         modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .bouncyClickable(onClick = onClick)
             .padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Thumbnail(video, Modifier.width(160.dp), RoundedCornerShape(8.dp))
+        Thumbnail(video, Modifier.width(160.dp), RoundedCornerShape(12.dp))
         Column(Modifier.weight(1f)) {
             Text(video.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
@@ -219,8 +220,8 @@ fun VideoRow(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifie
 /** Compact card for horizontal rows (most relevant, channel shelves). */
 @Composable
 fun VideoShelfCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.width(260.dp).clickable(onClick = onClick)) {
-        Thumbnail(video, Modifier.fillMaxWidth(), RoundedCornerShape(12.dp))
+    Column(modifier.width(260.dp).bouncyClickable(pressedScale = 0.95f, onClick = onClick)) {
+        Thumbnail(video, Modifier.fillMaxWidth(), RoundedCornerShape(14.dp))
         Spacer(Modifier.height(8.dp))
         Text(video.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(
@@ -236,12 +237,12 @@ fun VideoShelfCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = M
 /** Playlist thumbnail with its video-count badge, then the title. */
 @Composable
 fun PlaylistCard(playlist: PlaylistItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.clickable(onClick = onClick)) {
+    Column(modifier.bouncyClickable(pressedScale = 0.95f, onClick = onClick)) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
             AsyncImage(playlist.thumbnail, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
@@ -273,12 +274,18 @@ fun Pill(
     content: @Composable () -> Unit,
 ) {
     val bg = if (filled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
         modifier
+            .pressScale(source, 0.92f)
             .height(36.dp)
             .clip(CircleShape)
             .background(bg)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(interactionSource = source, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick)
+                } else Modifier,
+            )
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

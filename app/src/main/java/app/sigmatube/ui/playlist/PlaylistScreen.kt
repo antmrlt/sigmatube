@@ -1,5 +1,10 @@
 package app.sigmatube.ui.playlist
 
+import app.sigmatube.ui.components.SkeletonFeed
+import app.sigmatube.ui.components.Motion
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -103,7 +108,7 @@ fun PlaylistScreen(viewModel: PlaylistViewModel, onBack: () -> Unit, onVideoClic
         val modifier = Modifier.padding(padding).fillMaxSize()
         val details = state.details
         when {
-            state.isLoading -> LoadingState(modifier)
+            state.isLoading -> SkeletonFeed(modifier, rows = true)
             state.error != null || details == null ->
                 ErrorState(state.error ?: IllegalStateException(), onRetry = viewModel::load, modifier = modifier)
             else -> {
@@ -120,7 +125,7 @@ fun PlaylistScreen(viewModel: PlaylistViewModel, onBack: () -> Unit, onVideoClic
                             )
                         }
                     }
-                    items(state.videos, key = { it.url }) { video -> VideoRow(video, onClick = { onVideoClick(video) }) }
+                    items(state.videos, key = { it.url }) { video -> VideoRow(video, onClick = { onVideoClick(video) }, modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120))) }
                     if (state.isLoadingMore) item { ListFooterLoader() }
                 }
             }

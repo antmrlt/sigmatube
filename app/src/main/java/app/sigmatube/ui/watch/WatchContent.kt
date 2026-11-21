@@ -1,5 +1,7 @@
 package app.sigmatube.ui.watch
 
+import app.sigmatube.ui.theme.AppIcons
+import app.sigmatube.ui.components.rememberPopScale
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -287,11 +289,16 @@ private fun Details(
                     onRate = onRate,
                 )
                 Pill(onClick = { shareVideo(context, details.title, details.url) }) {
-                    Icon(Icons.AutoMirrored.Outlined.Reply, null, Modifier.size(20.dp).graphicsLayer(scaleX = -1f))
+                    Icon(AppIcons.Reply, null, Modifier.size(20.dp).graphicsLayer(scaleX = -1f))
                     Text("Partager", style = MaterialTheme.typography.labelLarge)
                 }
                 Pill(onClick = onToggleWatchLater) {
-                    Icon(if (inWatchLater) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, null, Modifier.size(20.dp))
+                    val savePop = rememberPopScale(inWatchLater, enabled = inWatchLater)
+                    Icon(
+                        if (inWatchLater) AppIcons.BookmarkFilled else AppIcons.Bookmark,
+                        null,
+                        Modifier.size(20.dp).graphicsLayer { scaleX = savePop; scaleY = savePop },
+                    )
                     Text(if (inWatchLater) "Enregistrée" else "Enregistrer", style = MaterialTheme.typography.labelLarge)
                 }
             }
@@ -418,10 +425,11 @@ private fun LikePill(likeCount: Long, status: LikeStatus, onRate: (LikeStatus) -
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            val likePop = rememberPopScale(status, enabled = status == LikeStatus.Like)
             Icon(
-                if (status == LikeStatus.Like) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                if (status == LikeStatus.Like) AppIcons.ThumbUpFilled else AppIcons.ThumbUp,
                 if (status == LikeStatus.Like) "Je n'aime plus" else "J'aime",
-                Modifier.size(20.dp),
+                Modifier.size(20.dp).graphicsLayer { scaleX = likePop; scaleY = likePop; rotationZ = (likePop - 1f) * -40f },
             )
             if (likeCount >= 0) Text(Format.compact(likeCount), style = MaterialTheme.typography.labelLarge)
         }
@@ -433,10 +441,11 @@ private fun LikePill(likeCount: Long, status: LikeStatus, onRate: (LikeStatus) -
                 .padding(start = 10.dp, end = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
+            val dislikePop = rememberPopScale(status, enabled = status == LikeStatus.Dislike)
             Icon(
-                if (status == LikeStatus.Dislike) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                if (status == LikeStatus.Dislike) AppIcons.ThumbDownFilled else AppIcons.ThumbDown,
                 "Je n'aime pas",
-                Modifier.size(20.dp),
+                Modifier.size(20.dp).graphicsLayer { scaleX = dislikePop; scaleY = dislikePop },
             )
         }
     }

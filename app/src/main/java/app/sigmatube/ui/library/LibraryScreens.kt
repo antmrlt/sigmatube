@@ -1,5 +1,10 @@
 package app.sigmatube.ui.library
 
+import app.sigmatube.ui.components.SkeletonFeed
+import app.sigmatube.ui.components.Motion
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -169,7 +174,7 @@ fun SubscriptionsScreen(
         modifier = Modifier.fillMaxSize(),
     ) {
         when {
-            state.isLoading -> LoadingState()
+            state.isLoading -> SkeletonFeed()
             state.error != null && state.videos.isEmpty() -> ErrorState(state.error!!, onRetry = { viewModel.load() })
             else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
                 if (state.channels.isNotEmpty()) {
@@ -206,6 +211,7 @@ fun SubscriptionsScreen(
                         video = video,
                         onClick = { onVideoClick(video) },
                         onChannelClick = video.channelUrl?.let { url -> { onChannelClick(url) } },
+                        modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120)),
                     )
                 }
                 if (state.isLoadingMore) item { ListFooterLoader() }
@@ -483,11 +489,11 @@ fun VideoListScreen(
             val listState = rememberLazyListState()
             LoadMoreEffect(listState, onLoadMore = vm::loadMore)
             when {
-                state.isLoading -> LoadingState(modifier)
+                state.isLoading -> SkeletonFeed(modifier, rows = true)
                 state.error != null -> ErrorState(state.error!!, onRetry = vm::load, modifier = modifier)
                 state.videos.isEmpty() -> MessageState("Cette liste est vide", null, modifier)
                 else -> LazyColumn(modifier, state = listState) {
-                    items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }) }
+                    items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }, modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120))) }
                     if (state.isLoadingMore) item { ListFooterLoader() }
                 }
             }
@@ -537,7 +543,7 @@ fun WatchLaterScreen(
         modifier = Modifier.fillMaxSize(),
     ) {
         when {
-            state.isLoading -> LoadingState()
+            state.isLoading -> SkeletonFeed(rows = true)
             state.error != null && state.videos.isEmpty() -> ErrorState(state.error!!, onRetry = vm::load)
             state.videos.isEmpty() -> MessageState(
                 "Aucune vidéo enregistrée",
@@ -546,7 +552,7 @@ fun WatchLaterScreen(
             )
             else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
                 item(key = "title") { SectionTitle("À regarder plus tard") }
-                items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }) }
+                items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }, modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120))) }
                 if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
             }
         }

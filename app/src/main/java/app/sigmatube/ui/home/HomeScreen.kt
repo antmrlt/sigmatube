@@ -1,5 +1,16 @@
 package app.sigmatube.ui.home
 
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.animation.animateColorAsState
+import app.sigmatube.ui.components.pressScale
+import app.sigmatube.ui.components.feedSkeleton
+import app.sigmatube.ui.components.Motion
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.ui.res.painterResource
@@ -177,7 +188,7 @@ fun HomeScreen(
                 CategoryChips(state.categories, state.selected, viewModel::select)
             }
             when {
-                state.isLoading -> item(key = "loading") { LoadingState(Modifier.height(400.dp)) }
+                state.isLoading -> feedSkeleton()
                 state.error != null && state.videos.isEmpty() -> item(key = "error") {
                     ErrorState(state.error!!, onRetry = { viewModel.load() }, modifier = Modifier.height(400.dp))
                 }
@@ -188,6 +199,7 @@ fun HomeScreen(
                             video = video,
                             onClick = { onVideoClick(video) },
                             onChannelClick = video.channelUrl?.let { url -> { onChannelClick(url) } },
+                            modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120)),
                         )
                     }
                     if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
@@ -211,15 +223,20 @@ private fun CategoryChips(categories: List<FeedCategory>, selected: String?, onS
 @Composable
 private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    // Colours cross-fade and the chip sinks under the finger.
+    val bg by animateColorAsState(if (selected) colors.primary else colors.surfaceContainerHigh, tween(220), label = "chipBg")
+    val fg by animateColorAsState(if (selected) colors.onPrimary else colors.onSurface, tween(220), label = "chipFg")
+    val source = remember { MutableInteractionSource() }
     Text(
         label,
         style = MaterialTheme.typography.labelLarge,
-        color = if (selected) colors.onPrimary else colors.onSurface,
+        color = fg,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) colors.primary else colors.surfaceContainerHigh)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .pressScale(source, 0.92f)
+            .clip(CircleShape)
+            .background(bg)
+            .clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     )
 }
 

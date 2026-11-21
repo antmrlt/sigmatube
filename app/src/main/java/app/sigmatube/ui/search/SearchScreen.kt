@@ -1,5 +1,6 @@
 package app.sigmatube.ui.search
 
+import app.sigmatube.ui.components.SkeletonFeed
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -210,7 +211,7 @@ fun SearchScreen(
                 onRemove = viewModel::removeFromHistory,
                 modifier = modifier,
             )
-            state.isLoading -> LoadingState(modifier)
+            state.isLoading -> SkeletonFeed(modifier)
             state.error != null -> ErrorState(state.error!!, onRetry = { viewModel.submit() }, modifier = modifier)
             state.results.isEmpty() -> MessageState(
                 title = "Aucun résultat",

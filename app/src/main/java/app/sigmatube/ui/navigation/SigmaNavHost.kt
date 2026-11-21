@@ -89,6 +89,33 @@ import app.sigmatube.ui.library.VideoListScreen
 import app.sigmatube.ui.settings.SettingsScreen
 import app.sigmatube.ui.watch.LocalSeekMs
 import kotlinx.serialization.Serializable
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
+import app.sigmatube.ui.components.rememberPopScale
+import kotlin.math.roundToInt
+import app.sigmatube.ui.theme.AppIcons
 
 /** The swipeable top-level pages (Accueil / Abonnements / À regarder plus tard / Vous). */
 @Serializable data object TabsRoute
@@ -102,10 +129,10 @@ import kotlinx.serialization.Serializable
 private data class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 
 private val tabs = listOf(
-    Tab("Accueil", Icons.Outlined.Home, Icons.Filled.Home),
-    Tab("Abonnements", Icons.Outlined.Subscriptions, Icons.Filled.Subscriptions),
-    Tab("À regarder plus tard", Icons.Outlined.WatchLater, Icons.Filled.WatchLater),
-    Tab("Vous", Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle),
+    Tab("Accueil", AppIcons.Home, AppIcons.HomeFilled),
+    Tab("Abonnements", AppIcons.Subscriptions, AppIcons.SubscriptionsFilled),
+    Tab("À regarder plus tard", AppIcons.Schedule, AppIcons.ScheduleFilled),
+    Tab("Vous", AppIcons.AccountCircle, AppIcons.AccountCircleFilled),
 )
 
 @Composable
@@ -175,22 +202,30 @@ fun SigmaNavHost(
             NavHost(
                 navController = navController,
                 startDestination = TabsRoute,
-                enterTransition = { fadeIn() },
-                exitTransition = { fadeOut() },
+                // Pushed pages slide in a little from the right and fade; back reverses it.
+                enterTransition = { slideInHorizontally(tween(280)) { it / 6 } + fadeIn(tween(220)) },
+                exitTransition = { fadeOut(tween(160)) },
+                popEnterTransition = { fadeIn(tween(220)) },
+                popExitTransition = { slideOutHorizontally(tween(260)) { it / 6 } + fadeOut(tween(180)) },
                 modifier = Modifier
                     .padding(padding)
                     .consumeWindowInsets(padding),
             ) {
                 composable<TabsRoute> {
-                    Column(Modifier.fillMaxSize()) {
+                    // The top bar slides away while scrolling down and comes back on the way up.
+                    val topBar = remember { CollapsingBarState() }
+                    LaunchedEffect(pagerState.currentPage) { topBar.offset = 0f }
+                    Column(Modifier.fillMaxSize().statusBarsPadding()) {
                     AppTopBar(
                         onSearch = { navController.navigate(SearchRoute) },
                         onSettings = if (pagerState.currentPage == tabs.lastIndex) ({ navController.navigate(SettingsRoute) }) else null,
+                        withStatusBarPadding = false,
+                        modifier = Modifier.collapsing(topBar),
                     )
                     HorizontalPager(
                         state = pagerState,
                         beyondViewportPageCount = 1,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).nestedScroll(topBar.connection),
                     ) { page ->
                         when (page) {
                             0 -> HomeScreen(
@@ -294,38 +329,81 @@ fun SigmaNavHost(
 
 @Composable
 private fun BottomBar(selected: Int, avatar: String?, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+    val haptics = LocalHapticFeedback.current
     Surface(color = MaterialTheme.colorScheme.background, modifier = modifier) {
         Column {
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.navigationBarsPadding().height(52.dp)) {
+            Row(Modifier.navigationBarsPadding().height(54.dp)) {
                 tabs.forEachIndexed { index, tab ->
                     val isSelected = index == selected
-                    Box(
+                    Column(
                         Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                            ) { onSelect(index) },
-                        contentAlignment = Alignment.Center,
+                            ) {
+                                if (!isSelected) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelect(index)
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
                     ) {
-                        if (index == tabs.lastIndex && avatar != null) {
-                            Avatar(
-                                avatar,
-                                28.dp,
-                                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.onBackground, CircleShape) else Modifier,
+                        // A pill grows behind the selected icon, and the icon pops when it gets selected.
+                        val pillWidth by animateDpAsState(
+                            if (isSelected) 60.dp else 34.dp,
+                            spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow),
+                            label = "pill",
+                        )
+                        val pillAlpha by animateFloatAsState(if (isSelected) 1f else 0f, tween(200), label = "pillAlpha")
+                        val pop = rememberPopScale(isSelected, enabled = isSelected)
+                        Box(Modifier.height(34.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Box(
+                                Modifier
+                                    .size(width = pillWidth, height = 34.dp)
+                                    .graphicsLayer { alpha = pillAlpha }
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
                             )
-                        } else {
-                            Icon(
-                                if (isSelected) tab.selectedIcon else tab.icon,
-                                contentDescription = tab.label,
-                                modifier = Modifier.size(28.dp),
-                            )
+                            Box(Modifier.graphicsLayer { scaleX = pop; scaleY = pop }, contentAlignment = Alignment.Center) {
+                                if (index == tabs.lastIndex && avatar != null) {
+                                    Avatar(
+                                        avatar,
+                                        27.dp,
+                                        if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.onBackground, CircleShape) else Modifier,
+                                    )
+                                } else {
+                                    Crossfade(isSelected, animationSpec = tween(180), label = "icon") { on ->
+                                        Icon(if (on) tab.selectedIcon else tab.icon, contentDescription = tab.label, modifier = Modifier.size(27.dp))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/** Offset (0 = fully shown, -height = hidden) of a bar that collapses with scrolling. */
+@Stable
+private class CollapsingBarState {
+    var offset by mutableFloatStateOf(0f)
+    var height = 0f
+    val connection = object : NestedScrollConnection {
+        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+            if (height > 0f) offset = (offset + available.y).coerceIn(-height, 0f)
+            return Offset.Zero
+        }
+    }
+}
+
+/** Shrinks the layout by the bar's offset so the content below follows it up. */
+private fun Modifier.collapsing(state: CollapsingBarState) = clipToBounds().layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    state.height = placeable.height.toFloat()
+    val offset = state.offset.roundToInt()
+    val visible = (placeable.height + offset).coerceAtLeast(0)
+    layout(placeable.width, visible) { placeable.place(0, offset) }
 }

@@ -1,5 +1,6 @@
 package app.sigmatube.ui.watch
 
+import app.sigmatube.ui.theme.AppIcons
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.filled.Bookmark
+import app.sigmatube.ui.components.rememberPopScale
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
@@ -447,19 +449,26 @@ private fun Controls(
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BarIcon(if (actions.likeStatus == LikeStatus.Like) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, "J'aime") {
+                    val likePop = rememberPopScale(actions.likeStatus, enabled = actions.likeStatus == LikeStatus.Like)
+                    val savePop = rememberPopScale(actions.inWatchLater, enabled = actions.inWatchLater)
+                    BarIcon(
+                        if (actions.likeStatus == LikeStatus.Like) AppIcons.ThumbUpFilled else AppIcons.ThumbUp,
+                        "J'aime",
+                        Modifier.graphicsLayer { scaleX = likePop; scaleY = likePop },
+                    ) {
                         act(actions.onLike)
                     }
-                    BarIcon(if (actions.likeStatus == LikeStatus.Dislike) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown, "Je n'aime pas") {
+                    BarIcon(if (actions.likeStatus == LikeStatus.Dislike) AppIcons.ThumbDownFilled else AppIcons.ThumbDown, "Je n'aime pas") {
                         act(actions.onDislike)
                     }
-                    BarIcon(Icons.Outlined.Comment, "Commentaires") { act(actions.onComments) }
+                    BarIcon(AppIcons.ChatBubble, "Commentaires") { act(actions.onComments) }
                     BarIcon(
-                        if (actions.inWatchLater) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (actions.inWatchLater) AppIcons.BookmarkFilled else AppIcons.Bookmark,
                         if (actions.inWatchLater) "Retirer de À regarder plus tard" else "À regarder plus tard",
+                        Modifier.graphicsLayer { scaleX = savePop; scaleY = savePop },
                     ) { act(actions.onSave) }
-                    BarIcon(Icons.AutoMirrored.Outlined.Reply, "Partager", Modifier.graphicsLayer(scaleX = -1f)) { act(actions.onShare) }
-                    BarIcon(Icons.Rounded.MoreHoriz, "Plus") { act(onSettings) }
+                    BarIcon(AppIcons.Reply, "Partager", Modifier.graphicsLayer(scaleX = -1f)) { act(actions.onShare) }
+                    BarIcon(AppIcons.MoreHoriz, "Plus") { act(onSettings) }
                 }
                 Spacer(Modifier.weight(1f))
                 if (actions.nextThumbnail != null) {
