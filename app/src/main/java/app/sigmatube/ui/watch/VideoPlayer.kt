@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
@@ -47,8 +48,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Comment
-import androidx.compose.material.icons.rounded.FastForward
-import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
@@ -158,7 +157,7 @@ fun VideoPlayer(
     var controlsVisible by remember { mutableStateOf(true) }
     var interactionTick by remember { mutableLongStateOf(0L) }
     var scrubFraction by remember { mutableStateOf<Float?>(null) }
-    // Double-tap feedback: -1 = rewind, +1 = forward, 0 = none.
+    // Double-tap seek: accumulated seconds (+20, -10…), 0 = none. Hides the controls while shown.
     var seekFeedback by remember { mutableIntStateOf(0) }
     var seekFeedbackTick by remember { mutableLongStateOf(0L) }
 
@@ -170,7 +169,7 @@ fun VideoPlayer(
     }
     LaunchedEffect(seekFeedbackTick) {
         if (seekFeedback != 0) {
-            delay(700)
+            delay(800)
             seekFeedback = 0
         }
     }
@@ -200,17 +199,29 @@ fun VideoPlayer(
             Modifier
                 .fillMaxSize()
                 .pointerInput(player) {
+                    fun seek(forward: Boolean) {
+                        val step = (seekMs / 1000).toInt()
+                        player.seekBy(if (forward) seekMs else -seekMs)
+                        // Same direction while the label is shown: keep counting (+10, +20…), like YouTube.
+                        seekFeedback = when {
+                            forward && seekFeedback > 0 -> seekFeedback + step
+                            !forward && seekFeedback < 0 -> seekFeedback - step
+                            else -> if (forward) step else -step
+                        }
+                        controlsVisible = false
+                        seekFeedbackTick++
+                    }
                     detectTapGestures(
-                        onTap = {
-                            controlsVisible = !controlsVisible
-                            interactionTick++
+                        onTap = { offset ->
+                            if (seekFeedback != 0) {
+                                // Still in seek mode: each extra tap on a side seeks again.
+                                seek(forward = offset.x > widthPx / 2f)
+                            } else {
+                                controlsVisible = !controlsVisible
+                                interactionTick++
+                            }
                         },
-                        onDoubleTap = { offset ->
-                            val forward = offset.x > widthPx / 2f
-                            if (forward) player.seekBy(seekMs) else player.seekBy(-seekMs)
-                            seekFeedback = if (forward) 1 else -1
-                            seekFeedbackTick++
-                        },
+                        onDoubleTap = { offset -> seek(forward = offset.x > widthPx / 2f) },
                     )
                 },
         )
@@ -223,15 +234,15 @@ fun VideoPlayer(
 
         if (seekFeedback != 0) {
             SeekFeedback(
-                forward = seekFeedback > 0,
+                seconds = seekFeedback,
                 modifier = Modifier
                     .align(if (seekFeedback > 0) Alignment.CenterEnd else Alignment.CenterStart)
-                    .padding(horizontal = 48.dp),
+                    .padding(horizontal = if (isFullscreen) 120.dp else 56.dp),
             )
         }
 
         AnimatedVisibility(
-            visible = controlsVisible || !ui.isPlaying,
+            visible = seekFeedback == 0 && (controlsVisible || !ui.isPlaying),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize(),
@@ -260,10 +271,11 @@ fun VideoPlayer(
 
         // Portrait: thin line always on the bottom edge (thumb only with controls).
         // Fullscreen: hidden together with the controls, like YouTube.
-        val showBar = !isFullscreen || controlsVisible || !ui.isPlaying || scrubFraction != null
+        val controlsShown = seekFeedback == 0 && (controlsVisible || !ui.isPlaying)
+        val showBar = !isFullscreen || controlsShown || scrubFraction != null
         if (showBar) SeekBar(
             ui = ui,
-            showThumb = controlsVisible || !ui.isPlaying || scrubFraction != null,
+            showThumb = controlsShown || scrubFraction != null,
             scrubFraction = scrubFraction,
             onScrub = {
                 scrubFraction = it
@@ -296,6 +308,7 @@ class PlayerActions(
     val onLike: () -> Unit,
     val onDislike: () -> Unit,
     val onComments: () -> Unit,
+    val inWatchLater: Boolean,
     val onSave: () -> Unit,
     val onShare: () -> Unit,
     val nextThumbnail: String?,
@@ -441,7 +454,10 @@ private fun Controls(
                         act(actions.onDislike)
                     }
                     BarIcon(Icons.Outlined.Comment, "Commentaires") { act(actions.onComments) }
-                    BarIcon(Icons.Outlined.BookmarkBorder, "Enregistrer") { act(actions.onSave) }
+                    BarIcon(
+                        if (actions.inWatchLater) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        if (actions.inWatchLater) "Retirer de À regarder plus tard" else "À regarder plus tard",
+                    ) { act(actions.onSave) }
                     BarIcon(Icons.AutoMirrored.Outlined.Reply, "Partager", Modifier.graphicsLayer(scaleX = -1f)) { act(actions.onShare) }
                     BarIcon(Icons.Rounded.MoreHoriz, "Plus") { act(onSettings) }
                 }
@@ -561,17 +577,17 @@ private fun RoundIcon(icon: ImageVector, label: String, size: Dp, enabled: Boole
     }
 }
 
+/** Bare "+10" / "-10" over the video (no bubble), shadowed to stay readable on bright frames. */
 @Composable
-private fun SeekFeedback(forward: Boolean, modifier: Modifier = Modifier) {
-    Column(
-        modifier
-            .background(Color.Black.copy(alpha = 0.35f), CircleShape)
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(if (forward) Icons.Rounded.FastForward else Icons.Rounded.FastRewind, null, tint = Color.White)
-        Text("${LocalSeekMs.current / 1000} s", color = Color.White, style = MaterialTheme.typography.labelMedium)
-    }
+private fun SeekFeedback(seconds: Int, modifier: Modifier = Modifier) {
+    Text(
+        if (seconds > 0) "+$seconds" else "$seconds",
+        color = Color.White,
+        style = MaterialTheme.typography.headlineSmall.copy(
+            shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.6f), blurRadius = 8f),
+        ),
+        modifier = modifier,
+    )
 }
 
 @Composable

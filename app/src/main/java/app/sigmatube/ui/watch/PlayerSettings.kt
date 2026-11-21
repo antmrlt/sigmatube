@@ -28,6 +28,13 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import android.view.View
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +65,8 @@ fun PlayerSettingsSheet(
     onQuality: (Int?) -> Unit,
     onSpeed: (Float) -> Unit,
     onLoop: (Boolean) -> Unit,
+    /** Fullscreen player: the sheet must not bring the status / navigation bars back. */
+    immersive: Boolean = false,
     onDismiss: () -> Unit,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Main) }
@@ -69,6 +78,7 @@ fun PlayerSettingsSheet(
         sheetMaxWidth = 520.dp,
         modifier = Modifier.padding(horizontal = 6.dp).navigationBarsPadding().padding(bottom = 6.dp),
     ) {
+        if (immersive) ImmersiveDialogWindow()
         Column(Modifier.padding(bottom = 8.dp).verticalScroll(rememberScrollState())) {
             when (page) {
                 SettingsPage.Main -> {
@@ -116,6 +126,22 @@ fun PlayerSettingsSheet(
                 }
             }
         }
+    }
+}
+
+/** Hides the system bars on the window of the dialog / sheet this is composed in. */
+@Composable
+private fun ImmersiveDialogWindow() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val window = generateSequence(view as? View) { it.parent as? View }
+            .firstNotNullOfOrNull { (it as? DialogWindowProvider)?.window }
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {}
     }
 }
 

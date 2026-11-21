@@ -390,6 +390,7 @@ data class VideoListUiState(
     val videos: List<VideoItem> = emptyList(),
     val nextPage: Page? = null,
     val isLoading: Boolean = true,
+    val isRefreshing: Boolean = false,
     val isLoadingMore: Boolean = false,
     val error: Throwable? = null,
 )
@@ -412,10 +413,23 @@ class AccountPlaylistViewModel(private val id: String, private val innerTube: In
         }
     }
 
+    /** Reloads in place (list stays on screen); [pull] shows the pull-to-refresh spinner. */
+    fun refresh(pull: Boolean = false) {
+        val s = _state.value
+        if (s.isLoading || s.isRefreshing) return
+        if (s.videos.isEmpty()) return load()
+        if (pull) _state.update { it.copy(isRefreshing = true) }
+        viewModelScope.launch {
+            runCatching { innerTube.accountPlaylist(id) }
+                .onSuccess { r -> _state.value = VideoListUiState(videos = r.items, nextPage = r.nextPage, isLoading = false) }
+                .onFailure { _state.update { it.copy(isRefreshing = false) } }
+        }
+    }
+
     fun loadMore() {
         val s = _state.value
         val page = s.nextPage ?: return
-        if (s.isLoading || s.isLoadingMore) return
+        if (s.isLoading || s.isLoadingMore || s.isRefreshing) return
         _state.update { it.copy(isLoadingMore = true) }
         viewModelScope.launch {
             val r = runCatching { innerTube.accountPlaylist(id, page) }.getOrNull()
@@ -491,6 +505,56 @@ fun VideoListScreen(
 
 // endregion
 
+// region "À regarder plus tard" tab
+
+@Composable
+fun WatchLaterScreen(
+    account: AccountManager,
+    innerTube: InnerTubeClient,
+    /** True while this tab is the one on screen: refreshes so newly saved videos show up. */
+    isVisible: Boolean,
+    onLogin: () -> Unit,
+    onVideoClick: (VideoItem) -> Unit,
+) {
+    val cookies by account.cookies.collectAsStateWithLifecycle()
+    if (cookies == null) {
+        SignInPrompt(
+            title = "À regarder plus tard",
+            message = "Connecte-toi pour retrouver les vidéos que tu as enregistrées pour plus tard.",
+            onLogin = onLogin,
+        )
+        return
+    }
+    val vm: AccountPlaylistViewModel = viewModel(key = "tab-$WATCH_LATER") { AccountPlaylistViewModel(WATCH_LATER, innerTube) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(cookies, isVisible) { if (isVisible) vm.refresh() }
+    val listState = rememberLazyListState()
+    LoadMoreEffect(listState, onLoadMore = vm::loadMore)
+
+    PullToRefreshBox(
+        isRefreshing = state.isRefreshing,
+        onRefresh = { vm.refresh(pull = true) },
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        when {
+            state.isLoading -> LoadingState()
+            state.error != null && state.videos.isEmpty() -> ErrorState(state.error!!, onRetry = vm::load)
+            state.videos.isEmpty() -> MessageState(
+                "Aucune vidéo enregistrée",
+                "Appuie sur « Enregistrer » sous une vidéo pour la regarder plus tard.",
+                icon = Icons.Outlined.WatchLater,
+            )
+            else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                item(key = "title") { SectionTitle("À regarder plus tard") }
+                items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }) }
+                if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
+            }
+        }
+    }
+}
+
+// endregion
+
 @Composable
 private fun SignInPrompt(title: String, message: String, onLogin: () -> Unit) {
     Column(
@@ -499,7 +563,11 @@ private fun SignInPrompt(title: String, message: String, onLogin: () -> Unit) {
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            if (title.contains("abonnement", true)) Icons.Outlined.Subscriptions else Icons.Outlined.AccountCircle,
+            when {
+                title.contains("abonnement", true) -> Icons.Outlined.Subscriptions
+                title.contains("plus tard", true) -> Icons.Outlined.WatchLater
+                else -> Icons.Outlined.AccountCircle
+            },
             null,
             Modifier.size(96.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,

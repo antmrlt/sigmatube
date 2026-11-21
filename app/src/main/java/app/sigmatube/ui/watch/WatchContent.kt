@@ -70,6 +70,8 @@ import app.sigmatube.data.auth.LikeStatus
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import app.sigmatube.ui.components.Avatar
 import app.sigmatube.ui.components.ListFooterLoader
 import app.sigmatube.ui.components.LoadMoreEffect
@@ -96,6 +98,8 @@ fun WatchContent(
     likeStatus: LikeStatus,
     likeDelta: Long,
     onRate: (LikeStatus) -> Unit,
+    inWatchLater: Boolean,
+    onToggleWatchLater: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier) {
@@ -105,6 +109,8 @@ fun WatchContent(
             likeStatus = likeStatus,
             likeDelta = likeDelta,
             onRate = onRate,
+            inWatchLater = inWatchLater,
+            onToggleWatchLater = onToggleWatchLater,
             listState = listState,
             onOpenDescription = { onPanelChange(WatchPanel.Description) },
             onOpenComments = { onPanelChange(WatchPanel.Comments) },
@@ -126,7 +132,7 @@ fun WatchContent(
                 onClose = { onPanelChange(WatchPanel.None) },
             ) {
                 when (lastPanel) {
-                    WatchPanel.Comments -> CommentsList(comments, commentActions)
+                    WatchPanel.Comments -> CommentsList(comments, commentActions, details.channelAvatar)
                     else -> DescriptionContent(details, onChannelClick)
                 }
             }
@@ -203,6 +209,8 @@ private fun Details(
     likeStatus: LikeStatus,
     likeDelta: Long,
     onRate: (LikeStatus) -> Unit,
+    inWatchLater: Boolean,
+    onToggleWatchLater: () -> Unit,
     listState: LazyListState,
     onOpenDescription: () -> Unit,
     onOpenComments: () -> Unit,
@@ -281,6 +289,10 @@ private fun Details(
                 Pill(onClick = { shareVideo(context, details.title, details.url) }) {
                     Icon(Icons.AutoMirrored.Outlined.Reply, null, Modifier.size(20.dp).graphicsLayer(scaleX = -1f))
                     Text("Partager", style = MaterialTheme.typography.labelLarge)
+                }
+                Pill(onClick = onToggleWatchLater) {
+                    Icon(if (inWatchLater) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, null, Modifier.size(20.dp))
+                    Text(if (inWatchLater) "Enregistrée" else "Enregistrer", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }

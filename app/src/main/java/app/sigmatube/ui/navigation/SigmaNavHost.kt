@@ -20,6 +20,9 @@ import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Subscriptions
+import androidx.compose.material.icons.outlined.WatchLater
+import androidx.compose.material.icons.filled.WatchLater
+import app.sigmatube.ui.library.WatchLaterScreen
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -87,7 +90,7 @@ import app.sigmatube.ui.settings.SettingsScreen
 import app.sigmatube.ui.watch.LocalSeekMs
 import kotlinx.serialization.Serializable
 
-/** The three swipeable top-level pages (Accueil / Abonnements / Vous). */
+/** The swipeable top-level pages (Accueil / Abonnements / À regarder plus tard / Vous). */
 @Serializable data object TabsRoute
 @Serializable data object SearchRoute
 @Serializable data object LoginRoute
@@ -101,6 +104,7 @@ private data class Tab(val label: String, val icon: ImageVector, val selectedIco
 private val tabs = listOf(
     Tab("Accueil", Icons.Outlined.Home, Icons.Filled.Home),
     Tab("Abonnements", Icons.Outlined.Subscriptions, Icons.Filled.Subscriptions),
+    Tab("À regarder plus tard", Icons.Outlined.WatchLater, Icons.Filled.WatchLater),
     Tab("Vous", Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle),
 )
 
@@ -181,7 +185,7 @@ fun SigmaNavHost(
                     Column(Modifier.fillMaxSize()) {
                     AppTopBar(
                         onSearch = { navController.navigate(SearchRoute) },
-                        onSettings = if (pagerState.currentPage == 2) ({ navController.navigate(SettingsRoute) }) else null,
+                        onSettings = if (pagerState.currentPage == tabs.lastIndex) ({ navController.navigate(SettingsRoute) }) else null,
                     )
                     HorizontalPager(
                         state = pagerState,
@@ -200,6 +204,13 @@ fun SigmaNavHost(
                                 onLogin = { navController.navigate(LoginRoute) },
                                 onVideoClick = { openVideo(it.url) },
                                 onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                            )
+                            2 -> WatchLaterScreen(
+                                account = container.account,
+                                innerTube = container.innerTube,
+                                isVisible = pagerState.currentPage == 2 && destination?.hasRoute(TabsRoute::class) == true,
+                                onLogin = { navController.navigate(LoginRoute) },
+                                onVideoClick = { openVideo(it.url) },
                             )
                             else -> LibraryScreen(
                                 account = container.account,
@@ -299,7 +310,7 @@ private fun BottomBar(selected: Int, avatar: String?, modifier: Modifier = Modif
                             ) { onSelect(index) },
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (index == 2 && avatar != null) {
+                        if (index == tabs.lastIndex && avatar != null) {
                             Avatar(
                                 avatar,
                                 28.dp,

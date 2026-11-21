@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import android.widget.Toast
+import android.view.ViewTreeObserver
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -150,7 +151,7 @@ fun WatchOverlay(
         CommentActions(
             loadMore = viewModel::loadMoreComments,
             sort = viewModel::sortComments,
-            toggleReplies = viewModel::toggleReplies,
+            openReplies = viewModel::openReplies,
             moreReplies = viewModel::loadMoreReplies,
             rate = { comment, target ->
                 if (!viewModel.rateComment(comment, target)) {
@@ -188,7 +189,8 @@ fun WatchOverlay(
         onLike = { if (!viewModel.toggleRating(LikeStatus.Like)) loginToast("Connecte-toi pour noter les vidéos") },
         onDislike = { if (!viewModel.toggleRating(LikeStatus.Dislike)) loginToast("Connecte-toi pour noter les vidéos") },
         onComments = { openCommentsRequest++ },
-        onSave = { if (!viewModel.saveToWatchLater()) loginToast("Connecte-toi pour enregistrer des vidéos") },
+        inWatchLater = state.inWatchLater,
+        onSave = { if (!viewModel.toggleWatchLater()) loginToast("Connecte-toi pour enregistrer des vidéos") },
         onShare = { details?.let { shareVideo(context, it.title, it.url) } },
         nextThumbnail = related.firstOrNull()?.thumbnail,
         onMoreVideos = { openRecommendationsRequest++ },
@@ -322,6 +324,7 @@ fun WatchOverlay(
                     SideCommentsPanel(
                         comments = state.comments,
                         actions = commentActions,
+                        creatorAvatar = details?.channelAvatar,
                         onClose = { showSideComments = false },
                         modifier = Modifier.fillMaxHeight().width(with(density) { (w * 0.4f).toDp() }),
                     )
@@ -358,6 +361,14 @@ fun WatchOverlay(
                             onRate = { target ->
                                 if (!viewModel.toggleRating(target)) {
                                     Toast.makeText(context, "Connecte-toi pour noter les vidéos", Toast.LENGTH_SHORT).show()
+                                    minimize()
+                                    onLoginRequired()
+                                }
+                            },
+                            inWatchLater = state.inWatchLater,
+                            onToggleWatchLater = {
+                                if (!viewModel.toggleWatchLater()) {
+                                    Toast.makeText(context, "Connecte-toi pour enregistrer des vidéos", Toast.LENGTH_SHORT).show()
                                     minimize()
                                     onLoginRequired()
                                 }
@@ -457,6 +468,7 @@ fun WatchOverlay(
             onQuality = viewModel::setQuality,
             onSpeed = viewModel::setSpeed,
             onLoop = viewModel::setLoop,
+            immersive = isLandscape,
             onDismiss = { showSettings = false },
         )
     }
@@ -575,11 +587,18 @@ private fun SystemBarsEffect(darkStatusBar: Boolean, immersive: Boolean) {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         val wasLight = controller.isAppearanceLightStatusBars
         if (darkStatusBar) controller.isAppearanceLightStatusBars = false
-        if (immersive) {
+        fun hideBars() {
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         }
+        if (immersive) hideBars()
+        // A dialog / bottom sheet on top (e.g. the player settings) brings the bars back when
+        // it takes focus: hide them again once the player window has focus back.
+        val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus -> if (hasFocus && immersive) hideBars() }
+        val observer = window.decorView.viewTreeObserver
+        observer.addOnWindowFocusChangeListener(focusListener)
         onDispose {
+            window.decorView.viewTreeObserver.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(focusListener)
             controller.isAppearanceLightStatusBars = wasLight
             controller.show(WindowInsetsCompat.Type.systemBars())
         }
@@ -592,6 +611,7 @@ private fun lerpF(a: Float, b: Float, t: Float) = a + (b - a) * t
 private fun SideCommentsPanel(
     comments: CommentsState,
     actions: CommentActions,
+    creatorAvatar: String?,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -614,6 +634,6 @@ private fun SideCommentsPanel(
             IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Fermer") }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        CommentsList(comments, actions)
+        CommentsList(comments, actions, creatorAvatar)
     }
 }

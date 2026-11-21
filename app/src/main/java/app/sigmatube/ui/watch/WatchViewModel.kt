@@ -31,7 +31,6 @@ data class RepliesState(
     val items: List<YtComment> = emptyList(),
     val nextToken: String? = null,
     val loading: Boolean = false,
-    val expanded: Boolean = false,
 )
 
 data class CommentsState(
@@ -61,6 +60,8 @@ data class WatchState(
     /** Local adjustment to the public like count after the user (un)likes. */
     val likeDelta: Long = 0,
     val hasPrevious: Boolean = false,
+    /** Whether the video is in the account's "À regarder plus tard". */
+    val inWatchLater: Boolean = false,
     /** One-shot message to show (toast), consumed by the UI. */
     val message: String? = null,
 )
@@ -138,7 +139,7 @@ class WatchViewModel(
         viewModelScope.launch {
             account.cookies.drop(1).collect { cookies ->
                 val url = _state.value.url ?: return@collect
-                if (cookies == null) _state.update { it.copy(likeStatus = LikeStatus.None, likeDelta = 0) }
+                if (cookies == null) _state.update { it.copy(likeStatus = LikeStatus.None, likeDelta = 0, inWatchLater = false) }
                 else loadLikeStatus(url)
                 loadComments(url)
             }
@@ -197,14 +198,26 @@ class WatchViewModel(
         playerManager.setCaptionsEnabled(enabled)
     }
 
-    /** Returns false when the user must sign in first. */
-    fun saveToWatchLater(): Boolean {
+    /** Adds to / removes from "À regarder plus tard". Returns false when the user must sign in first. */
+    fun toggleWatchLater(): Boolean {
         if (!account.isLoggedIn) return false
-        val id = _state.value.url?.let(::videoId) ?: return true
+        val url = _state.value.url ?: return true
+        val id = videoId(url) ?: return true
+        val add = !_state.value.inWatchLater
+        _state.update { it.copy(inWatchLater = add) }
         viewModelScope.launch {
-            runCatching { innerTube.addToWatchLater(id) }
-                .onSuccess { _state.update { it.copy(message = "Ajoutée à « À regarder plus tard »") } }
-                .onFailure { e -> _state.update { it.copy(message = e.message ?: "Action impossible") } }
+            runCatching { if (add) innerTube.addToWatchLater(id) else innerTube.removeFromWatchLater(id) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(message = if (add) "Ajoutée à « À regarder plus tard »" else "Supprimée de « À regarder plus tard »")
+                    }
+                }
+                .onFailure { e ->
+                    _state.update {
+                        if (it.url == url) it.copy(inWatchLater = !add, message = e.message ?: "Action impossible")
+                        else it.copy(message = e.message ?: "Action impossible")
+                    }
+                }
         }
         return true
     }
@@ -218,6 +231,11 @@ class WatchViewModel(
         viewModelScope.launch {
             runCatching { innerTube.likeStatus(id) }.onSuccess { status ->
                 if (_state.value.url == url) _state.update { it.copy(likeStatus = status, likeDelta = 0) }
+            }
+        }
+        viewModelScope.launch {
+            runCatching { innerTube.isInWatchLater(id) }.onSuccess { inList ->
+                if (_state.value.url == url) _state.update { it.copy(inWatchLater = inList) }
             }
         }
     }
@@ -389,17 +407,10 @@ class WatchViewModel(
         }
     }
 
-    /** Expands (loading the first 10) or collapses a comment's replies. */
-    fun toggleReplies(comment: YtComment) {
+    /** Opening a comment's replies page: loads the first 10 replies once. */
+    fun openReplies(comment: YtComment) {
         val existing = _state.value.comments.replies[comment.id]
-        if (existing?.expanded == true) {
-            updateReplies(comment.id) { it.copy(expanded = false) }
-            return
-        }
-        if (existing != null && existing.items.isNotEmpty()) {
-            updateReplies(comment.id) { it.copy(expanded = true) }
-            return
-        }
+        if (existing != null && (existing.loading || existing.items.isNotEmpty())) return
         val token = comment.repliesToken ?: return
         loadReplies(comment.id, token, reset = true)
     }
@@ -412,7 +423,7 @@ class WatchViewModel(
     }
 
     private fun loadReplies(commentId: String, token: String, reset: Boolean) {
-        updateReplies(commentId) { it.copy(loading = true, expanded = true) }
+        updateReplies(commentId) { it.copy(loading = true) }
         viewModelScope.launch {
             val page = runCatching { innerTube.commentReplies(token) }.getOrNull()
             updateReplies(commentId) {

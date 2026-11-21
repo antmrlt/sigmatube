@@ -200,6 +200,29 @@ class InnerTubeClient(
         Unit
     }
 
+    /** Removes a video from "À regarder plus tard". */
+    suspend fun removeFromWatchLater(videoId: String) = withContext(Dispatchers.IO) {
+        post(
+            "browse/edit_playlist",
+            JSONObject()
+                .put("playlistId", "WL")
+                .put("actions", JSONArray().put(JSONObject().put("removedVideoId", videoId).put("action", "ACTION_REMOVE_VIDEO_BY_VIDEO_ID"))),
+        )
+        Unit
+    }
+
+    /** Whether the video is already in "À regarder plus tard" (YouTube's "Enregistrer" dialog data). */
+    suspend fun isInWatchLater(videoId: String): Boolean = withContext(Dispatchers.IO) {
+        val json = post("playlist/get_add_to_playlist", JSONObject().put("videoIds", JSONArray().put(videoId)))
+        var inList = false
+        walk(json) { key, obj ->
+            if (key == "playlistAddToOptionRenderer" && obj.optString("playlistId") == "WL") {
+                inList = obj.optString("containsSelectedVideos") == "ALL"
+            }
+        }
+        inList
+    }
+
     private fun continuationItems(json: JSONObject): JSONArray {
         val endpoints = json.optJSONArray("onResponseReceivedEndpoints") ?: return JSONArray()
         val all = JSONArray()
