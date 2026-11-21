@@ -48,6 +48,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -167,6 +168,7 @@ fun SearchScreen(
     val hiddenIds = LocalHiddenChannels.current
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(Unit) {
         if (viewModel.state.value.submittedQuery == null) focusRequester.requestFocus()
@@ -174,6 +176,8 @@ fun SearchScreen(
 
     fun submit(q: String) {
         keyboard?.hide()
+        // Search done: the field lets go of the focus (no cursor, keyboard stays down).
+        focusManager.clearFocus()
         viewModel.submit(q)
     }
 

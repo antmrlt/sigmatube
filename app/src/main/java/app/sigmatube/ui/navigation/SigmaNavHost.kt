@@ -68,6 +68,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.ime
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -168,6 +169,7 @@ fun SigmaNavHost(
     val density = LocalDensity.current
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     val navBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val imeInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     val hiddenChannels by container.hiddenChannels.ids.collectAsStateWithLifecycle()
     val settingsState by container.settings.state.collectAsStateWithLifecycle()
@@ -317,7 +319,8 @@ fun SigmaNavHost(
             WatchOverlay(
                 viewModel = watch,
                 sheet = sheet,
-                bottomInset = if (showBottomBar) bottomBarHeight else navBarInset,
+                // Keyboard open (e.g. typing a search): the mini-player rests above it.
+                bottomInset = maxOf(if (showBottomBar) bottomBarHeight else navBarInset, imeInset),
                 onOpenVideo = openVideo,
                 onChannelClick = { navController.navigate(ChannelRoute(it)) },
                 onLoginRequired = { navController.navigate(LoginRoute) },
