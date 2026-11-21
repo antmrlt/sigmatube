@@ -80,6 +80,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import android.view.ViewTreeObserver
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -198,6 +201,9 @@ fun WatchOverlay(
 
     // Floating mini-player: which corner it rests in, and the live drag offset from that corner.
     var corner by remember { mutableStateOf(Corner.BottomEnd) }
+    var largeMini by remember { mutableStateOf(false) }
+    val largeMiniFraction by animateFloatAsState(if (largeMini) 1f else 0f, spring(stiffness = Spring.StiffnessMediumLow), label = "largeMini")
+    val haptics = LocalHapticFeedback.current
     val floatOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
 
     // A new video: back to the top, panels closed.
@@ -256,7 +262,9 @@ fun WatchOverlay(
 
         // Geometry: expanded video rect -> floating rect in the current corner.
         val expandedH = w * 9f / 16f
-        val miniW = minOf(w * 0.5f, with(density) { MiniMaxWidth.toPx() })
+        // Long press on the floating player toggles a large, full-width version.
+        val smallMiniW = minOf(w * 0.5f, with(density) { MiniMaxWidth.toPx() })
+        val miniW = lerpF(smallMiniW, w - 2 * margin, largeMiniFraction)
         val miniH = miniW * 9f / 16f
         fun cornerPos(c: Corner) = Offset(
             x = if (c == Corner.TopEnd || c == Corner.BottomEnd) w - miniW - margin else margin,
@@ -394,7 +402,7 @@ fun WatchOverlay(
         val minimized = sheet.isMinimized
 
         val floatingGestures = Modifier
-            .pointerInput(corner, w, h, bottomPx) {
+            .pointerInput(corner, w, h, bottomPx, miniW) {
                 val tracker = VelocityTracker()
                 // The box moves under the finger, so local positions barely change: track the
                 // accumulated drag instead to get a real fling velocity.
@@ -440,7 +448,15 @@ fun WatchOverlay(
                     },
                 )
             }
-            .pointerInput(Unit) { detectTapGestures { scope.launch { sheet.expand() } } }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { scope.launch { sheet.expand() } },
+                    onLongPress = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        largeMini = !largeMini
+                    },
+                )
+            }
 
         val radius = lerp(0.dp, 12.dp, p)
         Box(
@@ -448,7 +464,8 @@ fun WatchOverlay(
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .size(with(density) { vw.toDp() }, with(density) { vh.toDp() })
                 .shadow(lerp(0.dp, 8.dp, p), RoundedCornerShape(radius))
-                .clip(RoundedCornerShape(radius))
+                // Expanded: no clip, so the seek bar thumb can overhang the bottom edge like YouTube.
+                .then(if (p > 0f) Modifier.clip(RoundedCornerShape(radius)) else Modifier)
                 .background(Color.Black)
                 .then(if (minimized) floatingGestures else expandedDrag),
         ) {

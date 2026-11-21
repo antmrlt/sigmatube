@@ -52,6 +52,44 @@ class InnerTubeClient(
         }.getOrNull()
     }
 
+    /**
+     * "Musique" feed. YouTube's charts API (used by NewPipe) now refuses requests, so we read the
+     * official chart playlists shown on the YouTube Music channel ("Les 20 clips tendance France",
+     * "Top 100 des clips musicaux France"…), localised by the request's country.
+     */
+    suspend fun musicFeed(): List<VideoItem> = withContext(Dispatchers.IO) {
+        val home = post("browse", JSONObject().put("browseId", MUSIC_CHANNEL_ID), requireAuth = false)
+        val charts = mutableListOf<Pair<String, String>>() // id to title
+        walk(home) { key, obj ->
+            if (key == "lockupViewModel" && obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_PLAYLIST") {
+                val title = obj.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
+                    ?.optJSONObject("title")?.optString("content").orEmpty()
+                charts += obj.optString("contentId") to title
+            }
+        }
+        // Music videos (not audio-only tracks), country charts before worldwide ones, trending first.
+        val clips = charts.filter { (_, t) -> t.contains("clip", true) || t.contains("video", true) || t.contains("vidéo", true) }
+            .ifEmpty { charts }
+            .sortedBy { (_, t) -> if (t.contains("tendance", true) || t.contains("trending", true)) 0 else 1 }
+            .take(2)
+        val videos = clips.flatMap { (id, _) ->
+            runCatching { collectVideos(post("browse", JSONObject().put("browseId", "VL$id"), requireAuth = false)) }.getOrDefault(emptyList())
+        }
+        // Fallback: the channel's own "new music videos" shelf.
+        videos.ifEmpty { collectVideos(home) }.distinctBy { it.url }.ifEmpty { error("Aucune vidéo disponible pour le moment") }
+    }
+
+    /** "Films" feed: the most viewed official trailers of the month (the charts API is gone too). */
+    suspend fun trailersFeed(): List<VideoItem> = withContext(Dispatchers.IO) {
+        val query = if (Locale.getDefault().language == "fr") "bande annonce officielle" else "official trailer"
+        val json = post(
+            "search",
+            JSONObject().put("query", query).put("params", SEARCH_MOST_VIEWED_THIS_MONTH),
+            requireAuth = false,
+        )
+        collectVideos(json).filterNot { it.isLive }.ifEmpty { error("Aucune vidéo disponible pour le moment") }
+    }
+
     /** Current rating of a video by the signed-in user. */
     suspend fun likeStatus(videoId: String): LikeStatus = withContext(Dispatchers.IO) {
         val json = post("next", JSONObject().put("videoId", videoId))
@@ -644,6 +682,9 @@ class InnerTubeClient(
     private companion object {
         const val ORIGIN = "https://www.youtube.com"
         const val FALLBACK_CLIENT_VERSION = "2.20251101.00.00"
+        private const val MUSIC_CHANNEL_ID = "UC-9-kyTW8ZkZNDHQJ6FgpwQ"
+        /** Search filters: videos uploaded this month, sorted by view count. */
+        private const val SEARCH_MOST_VIEWED_THIS_MONTH = "CAMSBAgEEAE%3D"
         const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
     }
 }

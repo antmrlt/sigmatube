@@ -32,19 +32,29 @@ import java.util.concurrent.ConcurrentHashMap
  * Single entry point to YouTube data. Everything NewPipe-specific stays in here so the UI
  * only ever sees our own models.
  */
-class YouTubeRepository {
+class YouTubeRepository(private val innerTube: app.sigmatube.data.auth.InnerTubeClient) {
 
     private val service = ServiceList.YouTube
 
-    /** Trending categories (Music, Gaming, Movies…), without the live one. */
+    /**
+     * Categories (Music, Gaming, Movies…), without the live one. YouTube removed its "Tendances"
+     * page in 2025 (FEtrending now answers 400), so that one is dropped too.
+     */
     suspend fun categories(): List<FeedCategory> = io {
         service.kioskList.availableKiosks
-            .filterNot { it.contains("live", ignoreCase = true) }
+            .filterNot { it.contains("live", ignoreCase = true) || it.equals("Trending", ignoreCase = true) }
             .map { FeedCategory(it, categoryLabel(it)) }
             .sortedBy { CATEGORY_ORDER.indexOfFirst { key -> it.id.contains(key, true) }.let { i -> if (i < 0) 99 else i } }
     }
 
-    suspend fun category(id: String): List<VideoItem> = io {
+    suspend fun category(id: String): List<VideoItem> = when {
+        // NewPipe reads these two from YouTube Charts, whose API now answers 403.
+        id.contains("music", true) -> innerTube.musicFeed()
+        id.contains("movie", true) -> innerTube.trailersFeed()
+        else -> kiosk(id)
+    }
+
+    private suspend fun kiosk(id: String): List<VideoItem> = io {
         val extractor = service.kioskList.getExtractorById(id, null)
         extractor.fetchPage()
         extractor.initialPage.items.toVideoItems()

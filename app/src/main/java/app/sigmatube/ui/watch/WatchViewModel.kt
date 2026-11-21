@@ -120,6 +120,7 @@ class WatchViewModel(
             viewModelScope.launch {
                 runCatching { repository.video(url) }.onSuccess { d ->
                     _state.update { it.copy(details = d, isLoading = false, qualityLabel = playerManager.currentQualityLabel) }
+                    playerManager.backgroundAllowed = canPlayInBackground()
                 }
             }
             loadComments(url)
@@ -134,6 +135,10 @@ class WatchViewModel(
                 kotlinx.coroutines.delay(5_000)
                 if (player.isPlaying) saveProgress()
             }
+        }
+        // Background setting changed: show / drop the media notification accordingly.
+        viewModelScope.launch {
+            settings.state.drop(1).collect { if (_state.value.details != null) playerManager.backgroundAllowed = canPlayInBackground() }
         }
         // Signed in/out while a video is open: refresh its rating and comment actions.
         viewModelScope.launch {
@@ -294,6 +299,7 @@ class WatchViewModel(
 
     private fun startPlayback(details: VideoDetails, positionMs: Long) {
         val s = _state.value
+        playerManager.backgroundAllowed = canPlayInBackground()
         playerManager.play(this, details, positionMs, s.preferredHeight, settings.autoMaxHeight())
         playerManager.setCaptionsEnabled(settings.state.value.captions)
         player.setPlaybackSpeed(s.speed)

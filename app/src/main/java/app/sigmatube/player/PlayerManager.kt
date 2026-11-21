@@ -82,6 +82,12 @@ class PlayerManager(context: Context) {
     var currentQualityLabel: String? = null
         private set
 
+    /**
+     * Whether the current video may keep playing outside the app (music, or per settings).
+     * When false the service shows no media notification at all.
+     */
+    @Volatile var backgroundAllowed: Boolean = false
+
     /** Whoever started the current playback; only they may stop/pause it (guards against stale screens). */
     private var owner: Any? = null
 

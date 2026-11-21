@@ -56,10 +56,10 @@ class AppContainer(app: Application) {
         )
     }
 
-    val repository = YouTubeRepository()
     val playerManager = PlayerManager(app)
     val account = AccountManager(app)
     val innerTube = InnerTubeClient(httpClient, account)
+    val repository = YouTubeRepository(innerTube)
     val hiddenChannels = HiddenChannels(app)
     val settings = AppSettings(app)
     val history = LocalHistory(app, settings)
