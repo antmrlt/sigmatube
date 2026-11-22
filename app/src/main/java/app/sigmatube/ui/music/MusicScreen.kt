@@ -272,7 +272,7 @@ fun MusicScreen(
             item(key = "moods") {
                 LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(MUSIC_MOODS, key = { it.id }) { mood ->
-                        MoodChip("${mood.emoji}  ${mood.label}", selected = state.mood == mood.id) { viewModel.selectMood(mood.id) }
+                        MoodChip(mood.label, selected = state.mood == mood.id) { viewModel.selectMood(mood.id) }
                     }
                 }
             }

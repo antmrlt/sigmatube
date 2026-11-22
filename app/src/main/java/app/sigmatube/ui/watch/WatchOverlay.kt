@@ -402,6 +402,7 @@ fun WatchOverlay(
                 if (musicView && shownDetails == null) {
                     Spacer(Modifier.fillMaxWidth().height(with(density) { statusTop.toDp() }))
                     MusicPlayerSkeleton(
+                        headerDrag = expandedDrag,
                         videoHeight = with(density) { expandedH.toDp() },
                         error = state.error,
                         onMinimize = { minimize() },
@@ -416,6 +417,8 @@ fun WatchOverlay(
                         ui = ui,
                         videoHeight = with(density) { expandedH.toDp() },
                         hasNext = playerActions.hasNext,
+                        // Swiping down on the header minimises, like on the video.
+                        headerDrag = expandedDrag,
                         actions = MusicPageActions(
                             minimize = { minimize() },
                             playPause = { val pl = viewModel.player; if (pl.isPlaying) pl.pause() else { if (pl.playbackState == androidx.media3.common.Player.STATE_ENDED) pl.seekTo(0); pl.play() } },
@@ -562,10 +565,13 @@ fun WatchOverlay(
 
         // Music page: swipe the cover sideways for the next (left) or previous (right) song.
         val swipeThreshold = w * 0.22f
-        val coverSwipe = if (musicView && p == 0f) Modifier.pointerInput(playerActions.hasNext, state.hasPrevious) {
+        // Always present on the music page (even mid-minimise): adding / removing it while the
+        // vertical drag runs would recreate the drag handler and cut the gesture.
+        val coverSwipe = if (musicView) Modifier.pointerInput(playerActions.hasNext, state.hasPrevious) {
             detectHorizontalDragGestures(
                 onDragEnd = {
                     val dx = swipeX.value
+                    if (dx == 0f) return@detectHorizontalDragGestures
                     val goNext = dx < -swipeThreshold && playerActions.hasNext
                     val goPrevious = dx > swipeThreshold
                     scope.launch {
@@ -582,6 +588,7 @@ fun WatchOverlay(
                 },
                 onDragCancel = { scope.launch { swipeX.animateTo(0f, spring()) } },
                 onHorizontalDrag = { change, amount ->
+                    if (sheet.progress > 0f) return@detectHorizontalDragGestures
                     change.consume()
                     // Resists when there's nothing next.
                     val damp = if (swipeX.value + amount < 0 && !playerActions.hasNext) 0.3f else 1f

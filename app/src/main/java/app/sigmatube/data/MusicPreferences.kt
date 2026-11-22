@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 data class MusicGenre(val id: String, val label: String, val query: String, val color: Color)
 
 /** A mood for the "Humeur" picker of the Musique tab. */
-data class MusicMood(val id: String, val emoji: String, val label: String, val query: String)
+data class MusicMood(val id: String, val label: String, val query: String)
 
 val MUSIC_GENRES = listOf(
     MusicGenre("pop", "Pop", "pop hits clip officiel", Color(0xFFE91E63)),
@@ -34,14 +34,14 @@ val MUSIC_GENRES = listOf(
 )
 
 val MUSIC_MOODS = listOf(
-    MusicMood("chill", "😌", "Détente", "chill songs official video"),
-    MusicMood("energy", "⚡", "Énergie", "upbeat songs official music video"),
-    MusicMood("party", "🎉", "Fête", "party hits official music video"),
-    MusicMood("workout", "💪", "Sport", "workout songs official music video"),
-    MusicMood("focus", "🎧", "Concentration", "focus music instrumental"),
-    MusicMood("love", "❤️", "Romance", "love songs official video"),
-    MusicMood("sad", "🌧️", "Mélancolie", "sad songs official video"),
-    MusicMood("sleep", "🌙", "Sommeil", "calm sleep music"),
+    MusicMood("chill", "Détente", "chill songs official video"),
+    MusicMood("energy", "Énergie", "upbeat songs official music video"),
+    MusicMood("party", "Fête", "party hits official music video"),
+    MusicMood("workout", "Sport", "workout songs official music video"),
+    MusicMood("focus", "Concentration", "focus music instrumental"),
+    MusicMood("love", "Romance", "love songs official video"),
+    MusicMood("sad", "Mélancolie", "sad songs official video"),
+    MusicMood("sleep", "Sommeil", "calm sleep music"),
 )
 
 /** Music styles the user picked at first use of the Musique tab. */

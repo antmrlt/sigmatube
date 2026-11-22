@@ -123,6 +123,8 @@ fun MusicPlayerPage(
     hasNext: Boolean,
     actions: MusicPageActions,
     modifier: Modifier = Modifier,
+    /** Vertical drag that minimises the player, for the header. */
+    headerDrag: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     val hidden = LocalHiddenChannels.current
@@ -132,7 +134,7 @@ fun MusicPlayerPage(
     Column(modifier.background(colors.background)) {
         // Header: chevron down (minimise), title, overflow menu.
         Row(
-            Modifier.fillMaxWidth().height(MusicHeaderHeight).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().then(headerDrag).height(MusicHeaderHeight).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = actions.minimize) { Icon(Icons.Rounded.KeyboardArrowDown, "Réduire", Modifier.size(30.dp)) }
@@ -419,6 +421,7 @@ private fun MusicSeekBar(ui: PlayerUiState, onSeek: (Long) -> Unit) {
  */
 @Composable
 fun MusicPlayerSkeleton(
+    headerDrag: Modifier = Modifier,
     videoHeight: Dp,
     error: Throwable?,
     onMinimize: () -> Unit,
@@ -427,7 +430,7 @@ fun MusicPlayerSkeleton(
 ) {
     Column(modifier.background(MaterialTheme.colorScheme.background)) {
         Row(
-            Modifier.fillMaxWidth().height(MusicHeaderHeight).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().then(headerDrag).height(MusicHeaderHeight).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onMinimize) { Icon(Icons.Rounded.KeyboardArrowDown, "Réduire", Modifier.size(30.dp)) }
