@@ -72,3 +72,21 @@ class MusicPreferences(context: Context) {
         const val KEY_ONBOARDED = "onboarded"
     }
 }
+
+private val MUSIC_TITLE = Regex(
+    "official (music )?video|official audio|official mv|clip officiel|audio officiel|vid[eé]o officielle|video oficial|" +
+        """lyric|paroles|visuali[sz]er|music video|(^|\s)(ft|feat)\.? |remix|[(\[]audio[)\]]| - """,
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * Best guess, from list data only, that a video is a song: an artist channel ("- Topic", VEVO)
+ * or a music-video style title, and a song-like length. Used so the music player only moves on
+ * to music.
+ */
+fun VideoItem.looksLikeMusic(): Boolean {
+    if (isLive) return false
+    if (durationSeconds >= 0 && durationSeconds !in 60..900) return false
+    val channel = channelName.orEmpty()
+    return channel.endsWith(" - Topic") || channel.contains("VEVO") || MUSIC_TITLE.containsMatchIn(title)
+}

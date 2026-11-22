@@ -71,6 +71,7 @@ import app.sigmatube.data.VideoDetails
 import app.sigmatube.data.VideoItem
 import app.sigmatube.data.auth.LikeStatus
 import app.sigmatube.data.withoutHidden
+import app.sigmatube.data.looksLikeMusic
 import app.sigmatube.ui.components.EditableVideoRow
 import app.sigmatube.ui.components.Motion
 import app.sigmatube.ui.components.Thumbnail
@@ -126,7 +127,7 @@ fun MusicPlayerPage(
     val colors = MaterialTheme.colorScheme
     val hidden = LocalHiddenChannels.current
     val queue = state.queue
-    val suggestions = remember(details.related, hidden) { details.related.withoutHidden(hidden).filterNot { it.isLive }.take(20) }
+    val suggestions = remember(details.related, hidden) { details.related.withoutHidden(hidden).filter { it.looksLikeMusic() }.take(20) }
     var menuOpen by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.background)) {
@@ -266,7 +267,7 @@ private fun Controls(state: WatchState, ui: PlayerUiState, hasNext: Boolean, act
                 .clickable(interactionSource = pressSource, indication = null, onClick = actions.playPause),
             contentAlignment = Alignment.Center,
         ) {
-            if (ui.isBuffering && !ui.isPlaying) {
+            if (state.isLoading || (ui.isBuffering && !ui.isPlaying)) {
                 CircularProgressIndicator(Modifier.size(32.dp), color = Color.White, strokeWidth = 3.dp)
             } else {
                 Icon(

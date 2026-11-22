@@ -10,6 +10,7 @@ import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -99,6 +100,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sigmatube.data.VideoItem
+import app.sigmatube.data.LocalHiddenChannels
 import app.sigmatube.ui.components.Thumbnail
 import app.sigmatube.ui.components.shareVideo
 import app.sigmatube.ui.components.LocalVideoMenu
@@ -184,6 +186,7 @@ fun WatchOverlay(
     val playerSettings by viewModel.settingsState.collectAsStateWithLifecycle()
     var openCommentsRequest by remember { mutableStateOf(0) }
     val related = details?.related.orEmpty()
+    val autoNext = WatchViewModel.autoNext(state, LocalHiddenChannels.current)
     fun loginToast(text: String) {
         Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         onLoginRequired()
@@ -196,7 +199,7 @@ fun WatchOverlay(
         onCaptions = viewModel::toggleCaptions,
         onPrevious = viewModel::previous,
         onNext = viewModel::next,
-        hasNext = state.queue.isNotEmpty() || related.any { !it.isLive },
+        hasNext = state.queue.isNotEmpty() || autoNext != null,
         likeStatus = state.likeStatus,
         onLike = { if (!viewModel.toggleRating(LikeStatus.Like)) loginToast("Connecte-toi pour noter les vidéos") },
         onDislike = { if (!viewModel.toggleRating(LikeStatus.Dislike)) loginToast("Connecte-toi pour noter les vidéos") },
@@ -204,7 +207,7 @@ fun WatchOverlay(
         inWatchLater = state.inWatchLater,
         onSave = { if (!viewModel.toggleWatchLater()) loginToast("Connecte-toi pour enregistrer des vidéos") },
         onShare = { details?.let { shareVideo(context, it.title, it.url) } },
-        nextThumbnail = state.queue.firstOrNull()?.thumbnail ?: related.firstOrNull()?.thumbnail,
+        nextThumbnail = state.queue.firstOrNull()?.thumbnail ?: autoNext?.thumbnail,
         onMoreVideos = { openRecommendationsRequest++ },
     )
 
@@ -214,6 +217,7 @@ fun WatchOverlay(
     val largeMiniFraction by animateFloatAsState(if (largeMini) 1f else 0f, spring(stiffness = Spring.StiffnessMediumLow), label = "largeMini")
     val haptics = LocalHapticFeedback.current
     val floatOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val swipeX = remember { Animatable(0f) }
 
     // A new video: back to the top, panels closed.
     LaunchedEffect(state.url) {
@@ -379,7 +383,9 @@ fun WatchOverlay(
                     }
                     .background(MaterialTheme.colorScheme.background),
             ) {
-                if (musicView && details == null) {
+                // Next song loading: the page stays, filled with what the list already told us.
+                val shownDetails = details ?: state.preview?.asPreviewDetails(state.previewRelated)
+                if (musicView && shownDetails == null) {
                     Spacer(Modifier.fillMaxWidth().height(with(density) { statusTop.toDp() }))
                     MusicPlayerSkeleton(
                         videoHeight = with(density) { expandedH.toDp() },
@@ -388,10 +394,10 @@ fun WatchOverlay(
                         onRetry = viewModel::retry,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
-                } else if (musicView && details != null) {
+                } else if (musicView && shownDetails != null) {
                     Spacer(Modifier.fillMaxWidth().height(with(density) { statusTop.toDp() }))
                     MusicPlayerPage(
-                        details = details,
+                        details = shownDetails,
                         state = state,
                         ui = ui,
                         videoHeight = with(density) { expandedH.toDp() },
@@ -525,10 +531,46 @@ fun WatchOverlay(
                 )
             }
 
+        // Music page: swipe the cover sideways for the next (left) or previous (right) song.
+        val swipeThreshold = w * 0.22f
+        val coverSwipe = if (musicView && p == 0f) Modifier.pointerInput(playerActions.hasNext, state.hasPrevious) {
+            detectHorizontalDragGestures(
+                onDragEnd = {
+                    val dx = swipeX.value
+                    val goNext = dx < -swipeThreshold && playerActions.hasNext
+                    val goPrevious = dx > swipeThreshold
+                    scope.launch {
+                        if (goNext || goPrevious) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            val out = if (goNext) -w else w
+                            swipeX.animateTo(out, tween(160))
+                            if (goNext) viewModel.next() else viewModel.previous(toPreviousVideo = true)
+                            // The new song slides in from the other side.
+                            swipeX.snapTo(-out * 0.4f)
+                        }
+                        swipeX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))
+                    }
+                },
+                onDragCancel = { scope.launch { swipeX.animateTo(0f, spring()) } },
+                onHorizontalDrag = { change, amount ->
+                    change.consume()
+                    // Resists when there's nothing next.
+                    val damp = if (swipeX.value + amount < 0 && !playerActions.hasNext) 0.3f else 1f
+                    scope.launch { swipeX.snapTo(swipeX.value + amount * damp) }
+                },
+            )
+        } else Modifier
+
         val radius = lerp(if (musicView) 16.dp else 0.dp, 12.dp, p)
         Box(
             Modifier
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                .then(coverSwipe)
+                .graphicsLayer {
+                    translationX = swipeX.value
+                    alpha = 1f - (kotlin.math.abs(swipeX.value) / w).coerceIn(0f, 1f) * 0.7f
+                    rotationZ = swipeX.value / w * 4f
+                }
                 .size(with(density) { vw.toDp() }, with(density) { vh.toDp() })
                 .shadow(lerp(if (musicView) 12.dp else 0.dp, 8.dp, p), RoundedCornerShape(radius))
                 // Expanded video page: no clip, so the seek bar thumb can overhang the bottom edge like YouTube.
@@ -576,8 +618,17 @@ private fun PlayerSlot(
 ) {
     val details = state.details
     when {
-        // Music page loading: a shimmering cover instead of the black video box.
-        details == null && music -> Box(modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh).shimmer())
+        // Music page loading: the song's thumbnail if known, else a shimmering cover.
+        details == null && music -> Box(modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh).then(if (state.preview == null) Modifier.shimmer() else Modifier)) {
+            state.preview?.let { item ->
+                AsyncImage(
+                    model = app.sigmatube.ui.components.hqThumbnailUrl(item.url) ?: item.thumbnail,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
         details == null -> Box(modifier.background(Color.Black)) {
             if (state.isLoading) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center).size(36.dp), color = Color.White, strokeWidth = 3.dp)
@@ -596,19 +647,35 @@ private fun PlayerSlot(
                 )
             }
         }
-        else -> VideoPlayer(
-            player = viewModel.player,
-            ui = ui,
-            title = details.title,
-            isFullscreen = isFullscreen,
-            interactive = interactive,
-            onToggleFullscreen = onToggleFullscreen,
-            onMinimize = onMinimize,
-            onSettings = onSettings,
-            onRetry = viewModel::retry,
-            modifier = modifier,
-            actions = actions,
-        )
+        else -> Box(modifier) {
+            VideoPlayer(
+                player = viewModel.player,
+                ui = ui,
+                title = details.title,
+                isFullscreen = isFullscreen,
+                interactive = interactive,
+                onToggleFullscreen = onToggleFullscreen,
+                onMinimize = onMinimize,
+                onSettings = onSettings,
+                onRetry = viewModel::retry,
+                modifier = Modifier.fillMaxSize(),
+                actions = actions,
+            )
+            // Music page: the thumbnail covers the black frame until the song actually starts.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = music && !ui.isPlaying && ui.position < 500,
+                enter = fadeIn(),
+                exit = fadeOut(tween(250)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                AsyncImage(
+                    model = app.sigmatube.ui.components.hqThumbnailUrl(details.url) ?: details.thumbnail,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
     }
 }
 
@@ -725,3 +792,24 @@ private fun SideCommentsPanel(
         CommentsList(comments, actions, creatorAvatar)
     }
 }
+
+/** A list item dressed as video details, to draw the music page before the real details arrive. */
+private fun VideoItem.asPreviewDetails(related: List<VideoItem>) = app.sigmatube.data.VideoDetails(
+    url = url,
+    title = title,
+    description = "",
+    thumbnail = thumbnail,
+    channelName = channelName,
+    channelUrl = channelUrl,
+    channelAvatar = channelAvatar,
+    channelVerified = false,
+    subscriberCount = -1,
+    viewCount = viewCount,
+    likeCount = -1,
+    uploadDate = null,
+    uploadedText = uploadedText,
+    durationSeconds = durationSeconds,
+    isLive = isLive,
+    related = related,
+    streams = app.sigmatube.data.StreamOptions(emptyList(), null, emptyList(), null, null, false),
+)

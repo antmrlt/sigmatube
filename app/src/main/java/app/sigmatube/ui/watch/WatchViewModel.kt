@@ -18,6 +18,7 @@ import app.sigmatube.data.auth.SortChip
 import app.sigmatube.data.auth.YtComment
 import app.sigmatube.data.auth.YtCommentsPage
 import app.sigmatube.data.withoutHidden
+import app.sigmatube.data.looksLikeMusic
 import app.sigmatube.player.PlayerManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -71,6 +72,10 @@ data class WatchState(
      * Musique tab, then kept for what follows (queue, next, suggestions) until changed.
      */
     val musicView: Boolean = false,
+    /** While [details] loads: the list item being opened (title, artist, thumbnail), if known. */
+    val preview: VideoItem? = null,
+    /** The previous video's suggestions, kept on screen while the next one loads (music page). */
+    val previewRelated: List<VideoItem> = emptyList(),
 )
 
 /**
@@ -99,6 +104,11 @@ class WatchViewModel(
 
     /** Videos watched before the current one in this session ("previous" button). */
     private val backStack = ArrayDeque<String>()
+
+    /** Items seen in lists (queue, suggestions, played lists), to show a video right away while it loads. */
+    private val knownItems = HashMap<String, VideoItem>()
+
+    private fun remember(items: List<VideoItem>) = items.forEach { knownItems[it.url] = it }
 
     private val autoplayListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -185,9 +195,12 @@ class WatchViewModel(
                 hasPrevious = backStack.isNotEmpty(),
                 queue = it.queue.filterNot { q -> q.url == url },
                 musicView = it.musicView,
+                preview = knownItems[url],
+                previewRelated = it.details?.related ?: it.previewRelated,
             )
         }
-        load(url, startPositionMs = watchProgress.resumePosition(url))
+        // Music is played from the start; videos resume where they were left.
+        load(url, startPositionMs = if (_state.value.musicView) 0L else watchProgress.resumePosition(url))
         loadComments(url)
         loadLikeStatus(url)
     }
@@ -195,14 +208,22 @@ class WatchViewModel(
     /** Next = the queue first, then the first suggested video (skipping hidden ones), like YouTube's autoplay. */
     fun next() {
         _state.value.queue.firstOrNull()?.let { return open(it.url) }
-        val related = _state.value.details?.related.orEmpty().withoutHidden(hiddenChannels.all())
-        related.firstOrNull { !it.isLive }?.let { open(it.url) }
+        autoNext(_state.value, hiddenChannels.all())?.let { open(it.url) }
     }
 
     // region Queue ("File d'attente")
 
+    companion object {
+        /** What autoplay picks after this video: a suggestion, and only songs on the music page. */
+        fun autoNext(state: WatchState, hidden: Set<String>): VideoItem? {
+            val related = state.details?.related.orEmpty().withoutHidden(hidden)
+            return if (state.musicView) related.firstOrNull { it.looksLikeMusic() } else related.firstOrNull { !it.isLive }
+        }
+    }
+
     /** "Lire ensuite". With nothing open, plays the video right away; returns true in that case. */
     fun playNext(video: VideoItem, music: Boolean = false): Boolean {
+        remember(listOf(video))
         val current = _state.value.url
         if (current == null) { open(video.url, music); return true }
         if (video.url == current) {
@@ -215,6 +236,7 @@ class WatchViewModel(
 
     /** "Lire en dernier". With nothing open, plays the video right away; returns true in that case. */
     fun playLast(video: VideoItem, music: Boolean = false): Boolean {
+        remember(listOf(video))
         val current = _state.value.url
         if (current == null) { open(video.url, music); return true }
         if (video.url == current) {
@@ -228,6 +250,7 @@ class WatchViewModel(
     /** Plays a whole list (a playlist, a chart…): the picked video now, the rest queued after it. */
     fun playAll(videos: List<VideoItem>, start: Int = 0, shuffle: Boolean = false, music: Boolean? = null) {
         if (videos.isEmpty()) return
+        remember(videos)
         val ordered = if (shuffle) videos.shuffled() else videos.drop(start.coerceIn(0, videos.lastIndex))
         val first = ordered.first()
         _state.update { it.copy(queue = ordered.drop(1).filterNot { v -> v.isLive }, musicView = music ?: it.musicView) }
@@ -278,12 +301,17 @@ class WatchViewModel(
     fun showMessage(text: String) = _state.update { it.copy(message = text) }
 
     /** Restart if we're past the first seconds, otherwise go back to the previous video. */
-    fun previous() {
-        if (player.currentPosition > 3_000 || backStack.isEmpty()) {
+    /** [toPreviousVideo]: go back to the previous video even past the first seconds (swipe on the music page). */
+    fun previous(toPreviousVideo: Boolean = false) {
+        if ((!toPreviousVideo && player.currentPosition > 3_000) || backStack.isEmpty()) {
             player.seekTo(0)
             return
         }
-        open(backStack.removeLast(), pushHistory = false)
+        // The video we leave goes back to the front of the queue, so "next" returns to it.
+        val leaving = _state.value.details?.toItem()
+        val target = backStack.removeLast()
+        if (leaving != null) _state.update { it.copy(queue = listOf(leaving) + it.queue.filterNot { q -> q.url == leaving.url }) }
+        open(target, pushHistory = false)
     }
 
     fun setAutoplay(enabled: Boolean) = settings.update { it.copy(autoplay = enabled) }
@@ -386,6 +414,7 @@ class WatchViewModel(
             runCatching { repository.video(url) }
                 .onSuccess { details ->
                     history.addWatched(details.toItem())
+                    remember(details.related + details.toItem())
                     if (_state.value.musicView) history.addMusic(details.toItem())
                     _state.update { it.copy(details = details, isLoading = false, error = null) }
                     startPlayback(details, startPositionMs)

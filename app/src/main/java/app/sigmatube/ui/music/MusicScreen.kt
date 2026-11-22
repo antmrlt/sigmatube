@@ -86,6 +86,7 @@ import app.sigmatube.data.VideoItem
 import app.sigmatube.data.YouTubeRepository
 import app.sigmatube.data.auth.InnerTubeClient
 import app.sigmatube.data.withoutHidden
+import app.sigmatube.data.looksLikeMusic
 import app.sigmatube.ui.components.Avatar
 import app.sigmatube.ui.components.LocalVideoMenu
 import app.sigmatube.ui.components.PlaylistNameDialog
@@ -166,7 +167,7 @@ class MusicViewModel(
         val seed = history.music.value.firstOrNull() ?: return _state.update { it.copy(because = null) }
         _state.update { it.copy(because = seed to Shelf()) }
         viewModelScope.launch {
-            val related = runCatching { repository.video(seed.url).related }.getOrDefault(emptyList()).filter(::isSong)
+            val related = runCatching { repository.video(seed.url).related }.getOrDefault(emptyList()).filter { it.looksLikeMusic() }
             _state.update { it.copy(because = seed to Shelf(related, loading = false)) }
         }
     }
