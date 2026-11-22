@@ -12,6 +12,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -92,7 +95,11 @@ class PlaylistViewModel(private val url: String, private val repository: YouTube
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlaylistScreen(viewModel: PlaylistViewModel, onBack: () -> Unit, onVideoClick: (VideoItem) -> Unit) {
+fun PlaylistScreen(
+    viewModel: PlaylistViewModel,
+    onBack: () -> Unit,
+    onPlay: (videos: List<VideoItem>, start: Int, shuffle: Boolean) -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Scaffold(
         topBar = {
@@ -123,9 +130,22 @@ fun PlaylistScreen(viewModel: PlaylistViewModel, onBack: () -> Unit, onVideoClic
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (state.videos.isNotEmpty()) {
+                                androidx.compose.foundation.layout.Spacer(Modifier.padding(top = 12.dp))
+                                androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                                    app.sigmatube.ui.components.Pill(filled = true, onClick = { onPlay(state.videos, 0, false) }) {
+                                        Icon(Icons.Rounded.PlayArrow, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                                        Text("Tout lire", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimary)
+                                    }
+                                    app.sigmatube.ui.components.Pill(onClick = { onPlay(state.videos, 0, true) }) {
+                                        Icon(Icons.Rounded.Shuffle, null, Modifier.size(20.dp))
+                                        Text("Aléatoire", style = MaterialTheme.typography.labelLarge)
+                                    }
+                                }
+                            }
                         }
                     }
-                    items(state.videos, key = { it.url }) { video -> VideoRow(video, onClick = { onVideoClick(video) }, modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120))) }
+                    items(state.videos, key = { it.url }) { video -> VideoRow(video, onClick = { onPlay(state.videos, state.videos.indexOf(video), false) }, modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120))) }
                     if (state.isLoadingMore) item { ListFooterLoader() }
                 }
             }

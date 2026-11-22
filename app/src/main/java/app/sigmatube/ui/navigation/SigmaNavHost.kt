@@ -137,11 +137,14 @@ import app.sigmatube.ui.theme.AppIcons
 @Serializable data object TabsRoute
 @Serializable data object LoginRoute
 @Serializable data class ChannelRoute(val url: String)
-@Serializable data class PlaylistRoute(val url: String)
+/** [fromMusic]: an album opened from the music player, played on the music page too. */
+@Serializable data class PlaylistRoute(val url: String, val fromMusic: Boolean = false)
 @Serializable data object SettingsRoute
 @Serializable data class VideoListRoute(val kind: String)
 /** [fromMusic]: opened from the Musique tab, so playing it uses the music player page. */
 @Serializable data class LocalPlaylistRoute(val id: String, val fromMusic: Boolean = false)
+/** An artist page in the music style (Musique tab, music player, music search). */
+@Serializable data class MusicArtistRoute(val channelId: String)
 /** A music style page, from "Explorer les styles". */
 @Serializable data class MusicGenreRoute(val id: String)
 
@@ -176,7 +179,9 @@ fun SigmaNavHost(
     val musicTab = tabs.indexOfFirst { it.label == "Musique" }
     val inMusicContext = (destination?.hasRoute(TabsRoute::class) == true && pagerState.currentPage == musicTab) ||
         (destination?.hasRoute(LocalPlaylistRoute::class) == true && backStackEntry?.toRoute<LocalPlaylistRoute>()?.fromMusic == true) ||
-        destination?.hasRoute(MusicGenreRoute::class) == true
+        destination?.hasRoute(MusicGenreRoute::class) == true ||
+        destination?.hasRoute(MusicArtistRoute::class) == true ||
+        (destination?.hasRoute(PlaylistRoute::class) == true && backStackEntry?.toRoute<PlaylistRoute>()?.fromMusic == true)
     val musicContext by rememberUpdatedState(inMusicContext)
     /** Opens a video from a page; [music] = started from the Musique tab. */
     val openVideoAs: (String, Boolean?) -> Unit = { url, music ->
@@ -188,6 +193,21 @@ fun SigmaNavHost(
     val playListAs: (List<VideoItem>, Int, Boolean, Boolean) -> Unit = { videos, start, shuffle, music ->
         watch.playAll(videos, start, shuffle, music)
         scope.launch { sheet.expand() }
+    }
+    // Music pages: albums open as their YouTube playlist (resolved through YouTube Music).
+    val musicNav = remember(navController) {
+        app.sigmatube.ui.music.MusicNavigation(
+            play = { v, start, shuffle -> watch.playAll(v, start, shuffle, true); scope.launch { sheet.expand() } },
+            album = { albumId ->
+                scope.launch {
+                    val id = runCatching { container.innerTube.albumPlaylistId(albumId) }.getOrNull()
+                    if (id != null) navController.navigate(PlaylistRoute("https://www.youtube.com/playlist?list=$id", fromMusic = true))
+                    else watch.showMessage("Album indisponible")
+                }
+            },
+            artist = { id -> navController.navigate(MusicArtistRoute(id)) },
+            playlist = { id -> navController.navigate(PlaylistRoute("https://www.youtube.com/playlist?list=$id", fromMusic = true)) },
+        )
     }
     val openQueue: () -> Unit = {
         sheet.queueRequests++
@@ -285,7 +305,9 @@ fun SigmaNavHost(
                 composable<TabsRoute> {
                     // One search per tab, kept while visiting the other tabs.
                     val searches = List(tabs.size) { i ->
-                        viewModel(key = "search-$i") { SearchViewModel(repository, container.history) }
+                        viewModel(key = "search-$i") {
+                            SearchViewModel(repository, container.history, musicClient = if (i == musicTab) container.innerTube else null)
+                        }
                     }
                     val onTabs = destination?.hasRoute(TabsRoute::class) == true
                     // The expanded watch page owns the back button and the keyboard.
@@ -304,6 +326,8 @@ fun SigmaNavHost(
                                 isCurrent = page == pagerState.currentPage && onTabs && !watchCovers,
                                 onBack = search::close,
                                 onVideoClick = { openVideoAs(it.url, page == musicTab) },
+                                musicNav = if (page == musicTab) musicNav else null,
+                                placeholder = if (page == musicTab) "Rechercher un titre, un artiste…" else "Rechercher sur YouTube",
                                 onChannelClick = { navController.navigate(ChannelRoute(it)) },
                             )
                             return@HorizontalPager
@@ -337,7 +361,10 @@ fun SigmaNavHost(
                                 history = container.history,
                                 playlists = container.playlists,
                                 onOpenGenre = { navController.navigate(MusicGenreRoute(it.id)) },
-                                onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                                onArtistClick = { url ->
+                                    val id = channelIdFromUrl(url)
+                                    navController.navigate(if (id != null) MusicArtistRoute(id) else ChannelRoute(url))
+                                },
                                 queue = watchState.queue,
                                 onOpenQueue = openQueue,
                                 onOpenPlaylist = { navController.navigate(LocalPlaylistRoute(it, fromMusic = true)) },
@@ -391,6 +418,15 @@ fun SigmaNavHost(
                         onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, route.fromMusic) },
                     )
                 }
+                composable<MusicArtistRoute> { entry ->
+                    val id = entry.toRoute<MusicArtistRoute>().channelId
+                    app.sigmatube.ui.music.MusicArtistScreen(
+                        viewModel = viewModel { app.sigmatube.ui.music.MusicArtistViewModel(id, container.innerTube) },
+                        nav = musicNav,
+                        onBack = { navController.popBackStack() },
+                        onOpenChannel = { navController.navigate(ChannelRoute("https://www.youtube.com/channel/$id")) },
+                    )
+                }
                 composable<MusicGenreRoute> { entry ->
                     val genre = MUSIC_GENRES.firstOrNull { it.id == entry.toRoute<MusicGenreRoute>().id } ?: MUSIC_GENRES.first()
                     MusicGenreScreen(
@@ -417,7 +453,7 @@ fun SigmaNavHost(
                     PlaylistScreen(
                         viewModel = viewModel { PlaylistViewModel(route.url, repository) },
                         onBack = navController::popBackStack,
-                        onVideoClick = { openVideo(it.url) },
+                        onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, route.fromMusic) },
                     )
                 }
             }
@@ -431,6 +467,8 @@ fun SigmaNavHost(
                 bottomInset = maxOf(if (showBottomBar) bottomBarHeight else navBarInset, imeInset),
                 onOpenVideo = { url -> openVideoAs(url, null) },
                 onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                onPlaylistClick = { navController.navigate(PlaylistRoute(it, fromMusic = true)) },
+                onMusicArtistClick = { navController.navigate(MusicArtistRoute(it)) },
                 onLoginRequired = { navController.navigate(LoginRoute) },
             )
         }

@@ -104,6 +104,11 @@ import app.sigmatube.data.LocalHiddenChannels
 import app.sigmatube.ui.components.Thumbnail
 import app.sigmatube.ui.components.shareVideo
 import app.sigmatube.ui.components.LocalVideoMenu
+import app.sigmatube.ui.components.MenuExtra
+import app.sigmatube.data.looksLikeMusic
+import androidx.compose.material.icons.outlined.Album
+import androidx.compose.material.icons.outlined.OndemandVideo
+import androidx.compose.material.icons.outlined.Person
 import app.sigmatube.ui.components.shimmer
 import app.sigmatube.data.auth.LikeStatus
 import app.sigmatube.ui.components.userMessage
@@ -143,6 +148,10 @@ fun WatchOverlay(
     bottomInset: Dp,
     onOpenVideo: (String) -> Unit,
     onChannelClick: (String) -> Unit,
+    /** Opens a YouTube playlist page (an album). */
+    onPlaylistClick: (String) -> Unit,
+    /** Opens the music-style artist page (from the music player). */
+    onMusicArtistClick: (String) -> Unit,
     onLoginRequired: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -254,6 +263,11 @@ fun WatchOverlay(
         }
     }
     fun minimize() = scope.launch { panel = WatchPanel.None; sheet.minimize() }
+    /** Music player: the artist's music page; otherwise their channel. */
+    fun openArtistPage(channelUrl: String) {
+        val id = app.sigmatube.data.auth.channelIdFromUrl(channelUrl)
+        if (id != null) onMusicArtistClick(id) else onChannelClick(channelUrl)
+    }
     fun close() {
         viewModel.close()
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -413,9 +427,24 @@ fun WatchOverlay(
                             like = playerActions.onLike,
                             saveToPlaylist = { viewModel.currentItem()?.let { videoMenu?.saveToPlaylist(it) } },
                             share = playerActions.onShare,
-                            more = { viewModel.currentItem()?.let { videoMenu?.open(it) } },
+                            more = {
+                                viewModel.currentItem()?.let { item ->
+                                    videoMenu?.open(
+                                        item,
+                                        extras = listOf(
+                                            MenuExtra(Icons.Outlined.OndemandVideo, "Afficher la page vidéo") { viewModel.setMusicView(false) },
+                                            MenuExtra(Icons.Outlined.Person, "Voir la page de l'artiste") {
+                                                viewModel.openArtist { url -> minimize(); openArtistPage(url) }
+                                            },
+                                            MenuExtra(Icons.Outlined.Album, "Voir la page de l'album") {
+                                                viewModel.openAlbum { url -> minimize(); onPlaylistClick(url) }
+                                            },
+                                        ),
+                                    )
+                                }
+                            },
                             showVideoPage = { viewModel.setMusicView(false) },
-                            channel = { url -> minimize(); onChannelClick(url) },
+                            channel = { _ -> viewModel.openArtist { url -> minimize(); openArtistPage(url) } },
                             openVideo = { onOpenVideo(it.url) },
                             queue = queueActions,
                         ),
@@ -595,6 +624,10 @@ fun WatchOverlay(
             onQuality = viewModel::setQuality,
             onSpeed = viewModel::setSpeed,
             onLoop = viewModel::setLoop,
+            // Music video on the video page: offer the music player page.
+            onMusicPage = if (!musicView && (details.isMusic || viewModel.currentItem()?.looksLikeMusic() == true)) {
+                { viewModel.setMusicView(true) }
+            } else null,
             immersive = isLandscape,
             onDismiss = { showSettings = false },
         )

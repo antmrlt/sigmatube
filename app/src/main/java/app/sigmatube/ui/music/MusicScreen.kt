@@ -228,7 +228,8 @@ fun MusicScreen(
     onOpenQueue: () -> Unit,
     onOpenPlaylist: (String) -> Unit,
     onOpenGenre: (MusicGenre) -> Unit,
-    onChannelClick: (String) -> Unit,
+    /** Channel URL of an artist: opens their music page. */
+    onArtistClick: (String) -> Unit,
     onPlay: (videos: List<VideoItem>, start: Int, shuffle: Boolean) -> Unit,
 ) {
     val onboarded by prefs.onboarded.collectAsStateWithLifecycle()
@@ -341,7 +342,7 @@ fun MusicScreen(
                 item(key = "artists") {
                     ShelfHeader("Artistes", null)
                     LazyRow(contentPadding = ShelfPadding, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        items(artists, key = { it.channelUrl!! }) { v -> ArtistBubble(v) { onChannelClick(v.channelUrl!!) } }
+                        items(artists, key = { it.channelUrl!! }) { v -> ArtistBubble(v) { onArtistClick(v.channelUrl!!) } }
                     }
                 }
             }

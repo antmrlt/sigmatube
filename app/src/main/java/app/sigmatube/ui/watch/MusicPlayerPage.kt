@@ -128,7 +128,6 @@ fun MusicPlayerPage(
     val hidden = LocalHiddenChannels.current
     val queue = state.queue
     val suggestions = remember(details.related, hidden) { details.related.withoutHidden(hidden).filter { it.looksLikeMusic() }.take(20) }
-    var menuOpen by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.background)) {
         // Header: chevron down (minimise), title, overflow menu.
@@ -143,21 +142,7 @@ fun MusicPlayerPage(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f),
             )
-            Box {
-                IconButton(onClick = { menuOpen = true }) { Icon(AppIcons.MoreHoriz, "Plus d'options") }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Afficher la page vidéo") },
-                        leadingIcon = { Icon(Icons.Outlined.OndemandVideo, null) },
-                        onClick = { menuOpen = false; actions.showVideoPage() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Plus d'options…") },
-                        leadingIcon = { Icon(AppIcons.MoreVert, null) },
-                        onClick = { menuOpen = false; actions.more() },
-                    )
-                }
-            }
+            IconButton(onClick = actions.more) { Icon(AppIcons.MoreHoriz, "Plus d'options") }
         }
         // Room for the video (drawn on top by the overlay).
         Spacer(Modifier.height(videoHeight + 8.dp))

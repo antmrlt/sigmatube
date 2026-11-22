@@ -93,11 +93,15 @@ data class SearchUiState(
     val isLoadingMore: Boolean = false,
     val error: Throwable? = null,
     val nextPage: Page? = null,
+    /** Musique tab: YouTube Music results instead of the video feed. */
+    val music: app.sigmatube.data.auth.MusicSearchResult? = null,
 )
 
 class SearchViewModel(
     private val repository: YouTubeRepository,
     private val history: LocalHistory,
+    /** Set for the Musique tab: searches YouTube Music (songs, artists, albums). */
+    private val musicClient: app.sigmatube.data.auth.InnerTubeClient? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SearchUiState())
@@ -137,9 +141,15 @@ class SearchViewModel(
         suggestionJob?.cancel()
         searchJob?.cancel()
         _state.update {
-            it.copy(query = q, submittedQuery = q, isLoading = true, error = null, results = emptyList(), nextPage = null)
+            it.copy(query = q, submittedQuery = q, isLoading = true, error = null, results = emptyList(), nextPage = null, music = null)
         }
         searchJob = viewModelScope.launch {
+            if (musicClient != null) {
+                runCatching { musicClient.musicSearch(q) }
+                    .onSuccess { r -> _state.update { it.copy(music = r, isLoading = false) } }
+                    .onFailure { e -> _state.update { it.copy(error = e, isLoading = false) } }
+                return@launch
+            }
             runCatching { repository.search(q) }
                 .onSuccess { r -> _state.update { it.copy(results = r.items, nextPage = r.nextPage, isLoading = false) } }
                 .onFailure { e -> _state.update { it.copy(error = e, isLoading = false) } }
@@ -179,6 +189,8 @@ fun SearchScreen(
     onVideoClick: (VideoItem) -> Unit,
     onChannelClick: (String) -> Unit,
     placeholder: String = "Rechercher sur YouTube",
+    /** Musique tab: how to open songs, artists and albums from the music results. */
+    musicNav: app.sigmatube.ui.music.MusicNavigation? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
@@ -241,8 +253,10 @@ fun SearchScreen(
                 onRemove = viewModel::removeFromHistory,
                 modifier = modifier,
             )
+            state.isLoading && musicNav != null -> Column(modifier) { repeat(8) { app.sigmatube.ui.music.SongRowSkeleton() } }
             state.isLoading -> SkeletonFeed(modifier)
             state.error != null -> ErrorState(state.error!!, onRetry = { viewModel.submit() }, modifier = modifier)
+            state.music != null && musicNav != null -> app.sigmatube.ui.music.MusicSearchResults(state.music!!, musicNav, modifier)
             state.results.isEmpty() -> MessageState(
                 title = "Aucun résultat",
                 message = "Essaie avec d'autres mots-clés.",

@@ -81,14 +81,19 @@ class VideoMenuActions(
     val dontRecommendChannel: (VideoItem) -> Unit,
 )
 
+/** An entry shown above the usual ones, for the screen that opened the menu (e.g. the music player). */
+class MenuExtra(val icon: ImageVector, val label: String, val onClick: () -> Unit)
+
 /** Which video's menu (or follow-up sheet) is open. One instance for the whole app. */
 @Stable
 class VideoMenuState {
     internal var options by mutableStateOf<VideoItem?>(null)
+    internal var extras by mutableStateOf<List<MenuExtra>>(emptyList())
     internal var saveTo by mutableStateOf<VideoItem?>(null)
     internal var download by mutableStateOf<VideoItem?>(null)
 
-    fun open(video: VideoItem) {
+    fun open(video: VideoItem, extras: List<MenuExtra> = emptyList()) {
+        this.extras = extras
         options = video
     }
 
@@ -128,6 +133,10 @@ fun VideoMenuHost(state: VideoMenuState, actions: VideoMenuActions, playlists: L
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (state.extras.isNotEmpty()) {
+                    state.extras.forEach { extra -> MenuEntry(extra.icon, extra.label) { pick(extra.onClick) } }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                }
                 MenuEntry(Icons.AutoMirrored.Outlined.PlaylistPlay, "Lire ensuite dans la file d'attente") { pick { actions.playNext(video) } }
                 MenuEntry(Icons.AutoMirrored.Outlined.QueueMusic, "Lire en dernier dans la file d'attente") { pick { actions.playLast(video) } }
                 MenuEntry(Icons.Outlined.WatchLater, "Enregistrer dans « À regarder plus tard »") { pick { actions.saveToWatchLater(video) } }

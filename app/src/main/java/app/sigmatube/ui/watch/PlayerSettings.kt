@@ -67,6 +67,8 @@ fun PlayerSettingsSheet(
     onLoop: (Boolean) -> Unit,
     /** Fullscreen player: the sheet must not bring the status / navigation bars back. */
     immersive: Boolean = false,
+    /** Music video: switch to the music player page (null hides the entry). */
+    onMusicPage: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Main) }
@@ -107,6 +109,12 @@ fun PlayerSettingsSheet(
                             )
                         },
                     ) { onLoop(!loop) }
+                    if (onMusicPage != null) {
+                        SettingRow(app.sigmatube.ui.theme.AppIcons.MusicNote, "Afficher la page musique", chevron = true) {
+                            onDismiss()
+                            onMusicPage()
+                        }
+                    }
                 }
                 SettingsPage.Quality -> {
                     Header("Qualité pour la vidéo en cours", currentQualityLabel)

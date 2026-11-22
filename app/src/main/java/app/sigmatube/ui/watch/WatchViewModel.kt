@@ -295,7 +295,50 @@ class WatchViewModel(
     fun setMusicView(enabled: Boolean) = _state.update { it.copy(musicView = enabled) }
 
     /** The video being watched, as a list item (for its ⋮ menu). */
-    fun currentItem(): VideoItem? = _state.value.details?.toItem()
+    fun currentItem(): VideoItem? = _state.value.details?.toItem() ?: _state.value.preview
+
+    // region Artist / album pages
+
+    private val musicInfoCache = HashMap<String, app.sigmatube.data.auth.MusicInfo?>()
+
+    private suspend fun musicInfo(url: String): app.sigmatube.data.auth.MusicInfo? {
+        if (url in musicInfoCache) return musicInfoCache[url]
+        val info = videoId(url)?.let { id -> runCatching { innerTube.musicInfo(id) }.getOrNull() }
+        musicInfoCache[url] = info
+        return info
+    }
+
+    /** The artist's own channel (not the VEVO / "- Topic" one when YouTube says who the artist is). */
+    fun openArtist(onOpen: (String) -> Unit) {
+        val details = currentItem() ?: return
+        viewModelScope.launch {
+            val info = musicInfo(details.url)
+            val channelName = details.channelName.orEmpty()
+            val isLabelChannel = channelName.contains("VEVO") || channelName.endsWith(" - Topic")
+            val channelId = info?.artistChannelId
+                ?: (info?.artist ?: channelName.removeSuffix(" - Topic").replace("VEVO", "").trim().takeIf { isLabelChannel })
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { runCatching { innerTube.findChannel(it) }.getOrNull() }
+            val url = channelId?.let { "https://www.youtube.com/channel/$it" } ?: details.channelUrl
+            if (url != null) onOpen(url) else _state.update { it.copy(message = "Artiste introuvable") }
+        }
+    }
+
+    /** The album the song is from, as a YouTube playlist (found through YouTube Music). */
+    fun openAlbum(onOpen: (String) -> Unit) {
+        val details = currentItem() ?: return
+        viewModelScope.launch {
+            val info = musicInfo(details.url)
+            val artist = info?.artist ?: details.channelName?.removeSuffix(" - Topic")?.replace("VEVO", "")?.trim()
+            // "Artist - Song (Official Video)" -> "Song".
+            val song = info?.song ?: details.title.substringAfter(" - ").replace(Regex("[(\\[].*?[)\\]]"), "").trim()
+            val album = runCatching { innerTube.musicAlbum(listOfNotNull(artist, song).joinToString(" ")) }.getOrNull()
+            if (album != null) onOpen("https://www.youtube.com/playlist?list=${album.playlistId}")
+            else _state.update { it.copy(message = "Album introuvable pour ce titre") }
+        }
+    }
+
+    // endregion
 
     /** Shows a one-shot toast through the same channel as the player's own messages. */
     fun showMessage(text: String) = _state.update { it.copy(message = text) }
