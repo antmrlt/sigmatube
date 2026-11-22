@@ -93,6 +93,10 @@ class PlaylistViewModel(private val url: String, private val repository: YouTube
     }
 }
 
+/** "Album – Random Access Memories" -> "Random Access Memories" (YouTube's auto-generated album playlists). */
+fun cleanPlaylistTitle(title: String): String =
+    title.replace(Regex("""^(Album|Single|EP)\s*[–—-]\s*""", RegexOption.IGNORE_CASE), "").ifBlank { title }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistScreen(
@@ -105,7 +109,7 @@ fun PlaylistScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(state.details?.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(cleanPlaylistTitle(state.details?.title.orEmpty()), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Retour") } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -124,7 +128,7 @@ fun PlaylistScreen(
                 LazyColumn(modifier, state = listState) {
                     item {
                         Column(Modifier.padding(16.dp)) {
-                            Text(details.title, style = MaterialTheme.typography.headlineSmall)
+                            Text(cleanPlaylistTitle(details.title), style = MaterialTheme.typography.headlineSmall)
                             Text(
                                 Format.meta(details.uploader, if (details.videoCount >= 0) "${details.videoCount} vidéos" else null),
                                 style = MaterialTheme.typography.bodyMedium,

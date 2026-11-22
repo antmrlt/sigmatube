@@ -450,11 +450,21 @@ fun SigmaNavHost(
                 }
                 composable<PlaylistRoute> { entry ->
                     val route = entry.toRoute<PlaylistRoute>()
-                    PlaylistScreen(
-                        viewModel = viewModel { PlaylistViewModel(route.url, repository) },
-                        onBack = navController::popBackStack,
-                        onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, route.fromMusic) },
-                    )
+                    val playlistVm = viewModel { PlaylistViewModel(route.url, repository) }
+                    // From the music side: album view (cover, artist, tracklist).
+                    if (route.fromMusic) {
+                        app.sigmatube.ui.music.MusicAlbumScreen(
+                            viewModel = playlistVm,
+                            onBack = navController::popBackStack,
+                            onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, true) },
+                        )
+                    } else {
+                        PlaylistScreen(
+                            viewModel = playlistVm,
+                            onBack = navController::popBackStack,
+                            onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, false) },
+                        )
+                    }
                 }
             }
         }
