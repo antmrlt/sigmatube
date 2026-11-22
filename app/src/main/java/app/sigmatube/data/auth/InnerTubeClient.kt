@@ -90,6 +90,12 @@ class InnerTubeClient(
         collectVideos(json).filterNot { it.isLive }.ifEmpty { error("Aucune vidéo disponible pour le moment") }
     }
 
+    /** Most viewed videos of the month for a search (music recommendations: "Hits du mois"…). */
+    suspend fun mostViewedThisMonth(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
+        val json = post("search", JSONObject().put("query", query).put("params", SEARCH_MOST_VIEWED_THIS_MONTH), requireAuth = false)
+        collectVideos(json).filterNot { it.isLive }
+    }
+
     /** Current rating of a video by the signed-in user. */
     suspend fun likeStatus(videoId: String): LikeStatus = withContext(Dispatchers.IO) {
         val json = post("next", JSONObject().put("videoId", videoId))

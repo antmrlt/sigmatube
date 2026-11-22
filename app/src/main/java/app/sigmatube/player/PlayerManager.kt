@@ -8,7 +8,9 @@ import androidx.media3.common.MimeTypes
 import android.net.Uri
 import java.util.Locale
 import app.sigmatube.data.SubtitleTrack
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -49,16 +51,7 @@ class PlayerManager(context: Context) {
         spec.withAdditionalHeaders(headersFor(spec.uri.toString()))
     }
 
-    private fun headersFor(url: String): Map<String, String> = when {
-        YoutubeParsingHelper.isVisionOsStreamingUrl(url) ->
-            mapOf("User-Agent" to YoutubeParsingHelper.getVisionOsUserAgent(NewPipe.getPreferredLocalization()))
-        YoutubeParsingHelper.isWebStreamingUrl(url) -> mapOf(
-            "User-Agent" to OkHttpDownloader.USER_AGENT,
-            "Origin" to "https://www.youtube.com",
-            "Referer" to "https://www.youtube.com/",
-        )
-        else -> mapOf("User-Agent" to OkHttpDownloader.USER_AGENT)
-    }
+    private fun headersFor(url: String): Map<String, String> = streamHeaders(url)
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
         .setAudioAttributes(
@@ -73,6 +66,34 @@ class PlayerManager(context: Context) {
         .setSeekBackIncrementMs(SEEK_INCREMENT_MS)
         .setSeekForwardIncrementMs(SEEK_INCREMENT_MS)
         .build()
+
+    /** Receives next / previous from the media session (notification, lock screen, headset). */
+    interface SkipHandler {
+        fun next()
+        fun previous()
+    }
+
+    var skipHandler: SkipHandler? = null
+
+    /**
+     * What the media session controls: the player, plus "next" / "previous" buttons that go
+     * through the queue and the suggestions instead of ExoPlayer's (single-item) playlist.
+     */
+    val sessionPlayer: Player = object : ForwardingPlayer(player) {
+        private val skipCommands = intArrayOf(
+            COMMAND_SEEK_TO_NEXT, COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, COMMAND_SEEK_TO_PREVIOUS, COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+        )
+
+        override fun getAvailableCommands(): Player.Commands =
+            super.getAvailableCommands().buildUpon().addAll(*skipCommands).build()
+
+        override fun isCommandAvailable(command: Int) = command in skipCommands || super.isCommandAvailable(command)
+
+        override fun seekToNext() { skipHandler?.next() ?: super.seekToNext() }
+        override fun seekToNextMediaItem() { skipHandler?.next() ?: super.seekToNextMediaItem() }
+        override fun seekToPrevious() { skipHandler?.previous() ?: super.seekToPrevious() }
+        override fun seekToPreviousMediaItem() { skipHandler?.previous() ?: super.seekToPreviousMediaItem() }
+    }
 
     /** URL of the video currently loaded in the player, if any. */
     var currentUrl: String? = null
@@ -186,4 +207,19 @@ class PlayerManager(context: Context) {
     private companion object {
         const val SEEK_INCREMENT_MS = 10_000L
     }
+}
+
+/**
+ * googlevideo.com rejects (403) stream requests whose User-Agent doesn't match the client the
+ * URL was issued for. Shared by the player and the downloader.
+ */
+fun streamHeaders(url: String): Map<String, String> = when {
+    YoutubeParsingHelper.isVisionOsStreamingUrl(url) ->
+        mapOf("User-Agent" to YoutubeParsingHelper.getVisionOsUserAgent(NewPipe.getPreferredLocalization()))
+    YoutubeParsingHelper.isWebStreamingUrl(url) -> mapOf(
+        "User-Agent" to OkHttpDownloader.USER_AGENT,
+        "Origin" to "https://www.youtube.com",
+        "Referer" to "https://www.youtube.com/",
+    )
+    else -> mapOf("User-Agent" to OkHttpDownloader.USER_AGENT)
 }

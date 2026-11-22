@@ -14,7 +14,7 @@ android {
         targetSdk = 36
         // Overridden by CI (-PversionCode / -PversionName) so each release updates the previous one.
         versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = (project.findProperty("versionName") as String?) ?: "0.2.0-dev"
+        versionName = (project.findProperty("versionName") as String?) ?: "3.0.0-dev"
     }
 
     signingConfigs {

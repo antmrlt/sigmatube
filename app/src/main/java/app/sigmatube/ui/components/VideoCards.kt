@@ -22,8 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+
+
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -124,25 +124,16 @@ fun shareVideo(context: Context, title: String, url: String) {
     context.startActivity(Intent.createChooser(send, null))
 }
 
-/** Overflow (⋮) button with per-video actions. */
+/** Overflow (⋮) button: opens the video's options sheet (queue, save, download, share…). */
 @Composable
 fun VideoMenuButton(video: VideoItem, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
-        IconButton(onClick = { open = true }, modifier = Modifier.size(36.dp)) {
-            Icon(AppIcons.MoreVert, "Plus d'options", Modifier.size(20.dp))
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text("Partager") },
-                leadingIcon = { Icon(AppIcons.Share, null) },
-                onClick = {
-                    open = false
-                    shareVideo(context, video.title, video.url)
-                },
-            )
-        }
+    val menu = LocalVideoMenu.current
+    IconButton(
+        onClick = { if (menu != null) menu.open(video) else shareVideo(context, video.title, video.url) },
+        modifier = modifier.size(36.dp),
+    ) {
+        Icon(AppIcons.MoreVert, "Plus d'options", Modifier.size(20.dp))
     }
 }
 
@@ -223,14 +214,19 @@ fun VideoShelfCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = M
     Column(modifier.width(260.dp).bouncyClickable(pressedScale = 0.95f, onClick = onClick)) {
         Thumbnail(video, Modifier.fillMaxWidth(), RoundedCornerShape(14.dp))
         Spacer(Modifier.height(8.dp))
-        Text(video.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(
-            Format.meta(video.channelName, Format.views(video.viewCount) ?: video.viewsText, video.uploadedText),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row {
+            Column(Modifier.weight(1f)) {
+                Text(video.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    Format.meta(video.channelName, Format.views(video.viewCount) ?: video.viewsText, video.uploadedText),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            VideoMenuButton(video, Modifier.padding(start = 2.dp))
+        }
     }
 }
 

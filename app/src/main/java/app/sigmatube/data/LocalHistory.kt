@@ -4,7 +4,6 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * Watch and search history, stored on the device only. Videos played in SigmaTube are not
@@ -17,6 +16,10 @@ class LocalHistory(context: Context, private val settings: AppSettings) {
     private val _watched = MutableStateFlow(readVideos())
     val watched: StateFlow<List<VideoItem>> = _watched
 
+    /** What was played in the music player page: "Écoutés récemment" and music recommendations. */
+    private val _music = MutableStateFlow(readVideos(KEY_MUSIC))
+    val music: StateFlow<List<VideoItem>> = _music
+
     private val _searches = MutableStateFlow(readSearches())
     val searches: StateFlow<List<String>> = _searches
 
@@ -24,12 +27,20 @@ class LocalHistory(context: Context, private val settings: AppSettings) {
         if (settings.state.value.pauseWatchHistory) return
         val next = (listOf(video) + _watched.value.filterNot { it.url == video.url }).take(MAX_VIDEOS)
         _watched.value = next
-        prefs.edit().putString(KEY_VIDEOS, JSONArray(next.map(::toJson)).toString()).apply()
+        prefs.edit().putString(KEY_VIDEOS, JSONArray(next.map { it.toJson() }).toString()).apply()
     }
 
     fun clearWatched() {
         _watched.value = emptyList()
-        prefs.edit().remove(KEY_VIDEOS).apply()
+        _music.value = emptyList()
+        prefs.edit().remove(KEY_VIDEOS).remove(KEY_MUSIC).apply()
+    }
+
+    fun addMusic(video: VideoItem) {
+        if (settings.state.value.pauseWatchHistory) return
+        val next = (listOf(video) + _music.value.filterNot { it.url == video.url }).take(MAX_MUSIC)
+        _music.value = next
+        prefs.edit().putString(KEY_MUSIC, JSONArray(next.map { it.toJson() }).toString()).apply()
     }
 
     fun addSearch(query: String) {
@@ -56,39 +67,16 @@ class LocalHistory(context: Context, private val settings: AppSettings) {
         (0 until arr.length()).map { arr.getString(it) }
     }.getOrDefault(emptyList())
 
-    private fun readVideos(): List<VideoItem> = runCatching {
-        val arr = JSONArray(prefs.getString(KEY_VIDEOS, "[]"))
-        (0 until arr.length()).mapNotNull { fromJson(arr.getJSONObject(it)) }
+    private fun readVideos(key: String = KEY_VIDEOS): List<VideoItem> = runCatching {
+        val arr = JSONArray(prefs.getString(key, "[]"))
+        (0 until arr.length()).mapNotNull { videoFromJson(arr.getJSONObject(it)) }
     }.getOrDefault(emptyList())
-
-    private fun toJson(v: VideoItem) = JSONObject()
-        .put("url", v.url).put("title", v.title).put("thumbnail", v.thumbnail)
-        .put("channelName", v.channelName).put("channelUrl", v.channelUrl).put("channelAvatar", v.channelAvatar)
-        .put("duration", v.durationSeconds).put("views", v.viewCount).put("viewsText", v.viewsText)
-        .put("uploadedText", v.uploadedText).put("isLive", v.isLive)
-
-    private fun fromJson(o: JSONObject): VideoItem? {
-        val url = o.optString("url").takeIf { it.isNotEmpty() } ?: return null
-        fun str(k: String) = o.optString(k).takeIf { it.isNotEmpty() && it != "null" }
-        return VideoItem(
-            url = url,
-            title = o.optString("title"),
-            thumbnail = str("thumbnail"),
-            channelName = str("channelName"),
-            channelUrl = str("channelUrl"),
-            channelAvatar = str("channelAvatar"),
-            durationSeconds = o.optLong("duration", -1),
-            viewCount = o.optLong("views", -1),
-            uploadDate = null,
-            uploadedText = str("uploadedText"),
-            isLive = o.optBoolean("isLive"),
-            viewsText = str("viewsText"),
-        )
-    }
 
     private companion object {
         const val KEY_VIDEOS = "videos"
         const val KEY_SEARCHES = "searches"
+        const val KEY_MUSIC = "music"
+        const val MAX_MUSIC = 50
         const val MAX_VIDEOS = 200
         const val MAX_SEARCHES = 50
     }

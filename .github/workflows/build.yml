@@ -25,7 +25,7 @@ jobs:
       # Every build gets its own version: versionCode grows with each run so a new APK
       # always installs over the previous one.
       - name: Compute version
-        run: echo "VERSION=0.2.${{ github.run_number }}" >> "$GITHUB_ENV"
+        run: echo "VERSION=3.0.${{ github.run_number }}" >> "$GITHUB_ENV"
 
       - name: Build
         run: |

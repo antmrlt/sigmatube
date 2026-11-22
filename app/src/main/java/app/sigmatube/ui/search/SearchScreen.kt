@@ -5,7 +5,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -79,6 +82,8 @@ import kotlinx.coroutines.launch
 import org.schabi.newpipe.extractor.Page
 
 data class SearchUiState(
+    /** Whether this tab currently shows its search (each tab keeps its own). */
+    val active: Boolean = false,
     val query: String = "",
     /** Query the current results belong to; null while the user is still typing. */
     val submittedQuery: String? = null,
@@ -101,6 +106,15 @@ class SearchViewModel(
 
     private var suggestionJob: Job? = null
     private var searchJob: Job? = null
+
+    fun open() = _state.update { if (it.active) it else SearchUiState(active = true) }
+
+    /** Leaves the search: the tab shows its own content again. */
+    fun close() {
+        suggestionJob?.cancel()
+        searchJob?.cancel()
+        _state.value = SearchUiState()
+    }
 
     fun onQueryChange(query: String) {
         _state.update { it.copy(query = query, submittedQuery = null) }
@@ -159,9 +173,12 @@ class SearchViewModel(
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel,
+    /** True while this tab is the one on screen (focus and keyboard follow it). */
+    isCurrent: Boolean,
     onBack: () -> Unit,
     onVideoClick: (VideoItem) -> Unit,
     onChannelClick: (String) -> Unit,
+    placeholder: String = "Rechercher sur YouTube",
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
@@ -170,9 +187,18 @@ fun SearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(Unit) {
-        if (viewModel.state.value.submittedQuery == null) focusRequester.requestFocus()
+    var hasFocus by remember { mutableStateOf(false) }
+
+    // Back on a tab whose search was being typed: the keyboard comes back. Leaving it: it goes away.
+    LaunchedEffect(isCurrent) {
+        if (isCurrent) {
+            if (viewModel.state.value.submittedQuery == null) runCatching { focusRequester.requestFocus() }
+        } else if (hasFocus) {
+            keyboard?.hide()
+            focusManager.clearFocus()
+        }
     }
+    BackHandler(enabled = isCurrent, onBack = onBack)
 
     fun submit(q: String) {
         keyboard?.hide()
@@ -181,11 +207,9 @@ fun SearchScreen(
         viewModel.submit(q)
     }
 
-    Scaffold(
-        topBar = {
+    Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier
-                    .statusBarsPadding()
                     .fillMaxWidth()
                     .padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -199,12 +223,14 @@ fun SearchScreen(
                         viewModel.onQueryChange("")
                         focusRequester.requestFocus()
                     },
-                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                    placeholder = placeholder,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { hasFocus = it.isFocused },
                 )
             }
-        },
-    ) { padding ->
-        val modifier = Modifier.padding(padding).fillMaxSize()
+        val modifier = Modifier.weight(1f).fillMaxWidth()
         when {
             state.submittedQuery == null -> Suggestions(
                 query = state.query,
@@ -248,6 +274,7 @@ private fun SearchField(
     onValueChange: (String) -> Unit,
     onSearch: () -> Unit,
     onClear: () -> Unit,
+    placeholder: String,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -261,7 +288,7 @@ private fun SearchField(
     ) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (value.isEmpty()) {
-                Text("Rechercher sur YouTube", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
             }
             BasicTextField(
                 value = value,

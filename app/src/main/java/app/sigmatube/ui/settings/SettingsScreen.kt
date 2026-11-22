@@ -86,6 +86,7 @@ fun SettingsScreen(
     val s by settings.state.collectAsStateWithLifecycle()
     val cookies by account.cookies.collectAsStateWithLifecycle()
     val hidden by hiddenChannels.ids.collectAsStateWithLifecycle()
+    val hiddenVideos by hiddenChannels.videos.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var choice by remember { mutableStateOf<Choice<*>?>(null) }
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
@@ -168,6 +169,13 @@ fun SettingsScreen(
                 Entry(Icons.Outlined.Block, "Chaînes masquées", if (hidden.isEmpty()) "Aucune" else "${hidden.size} chaîne(s)") {
                     if (hidden.isNotEmpty()) {
                         confirm = "Ne plus masquer les ${hidden.size} chaîne(s) masquée(s) ?" to { hidden.forEach { id -> hiddenChannels.setHidden(id, false) } }
+                    }
+                }
+            }
+            item {
+                Entry(Icons.Outlined.Block, "Vidéos « Pas intéressé »", if (hiddenVideos.isEmpty()) "Aucune" else "${hiddenVideos.size} vidéo(s)") {
+                    if (hiddenVideos.isNotEmpty()) {
+                        confirm = "Afficher à nouveau les ${hiddenVideos.size} vidéo(s) masquée(s) ?" to hiddenChannels::clearVideos
                     }
                 }
             }

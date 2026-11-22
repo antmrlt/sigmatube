@@ -22,7 +22,6 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Subscriptions
 import androidx.compose.material.icons.outlined.WatchLater
 import androidx.compose.material.icons.filled.WatchLater
-import app.sigmatube.ui.library.WatchLaterScreen
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -55,6 +55,21 @@ import app.sigmatube.ui.library.SubscriptionsScreen
 import app.sigmatube.ui.library.SubscriptionsViewModel
 import app.sigmatube.ui.account.LoginScreen
 import app.sigmatube.ui.search.SearchScreen
+import app.sigmatube.ui.music.MusicScreen
+import app.sigmatube.ui.music.MusicViewModel
+import app.sigmatube.ui.music.MusicGenreScreen
+import app.sigmatube.ui.music.MusicGenreViewModel
+import app.sigmatube.data.MUSIC_GENRES
+import app.sigmatube.ui.playlist.LocalPlaylistScreen
+import app.sigmatube.ui.components.LocalVideoMenu
+import app.sigmatube.ui.components.VideoMenuActions
+import app.sigmatube.ui.components.VideoMenuHost
+import app.sigmatube.ui.components.VideoMenuState
+import app.sigmatube.data.VideoItem
+import app.sigmatube.data.videoIdOf
+import app.sigmatube.data.auth.channelIdFromUrl
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import app.sigmatube.ui.search.SearchViewModel
 import app.sigmatube.ui.watch.WatchOverlay
 import app.sigmatube.ui.playlist.PlaylistScreen
@@ -118,21 +133,24 @@ import app.sigmatube.ui.components.rememberPopScale
 import kotlin.math.roundToInt
 import app.sigmatube.ui.theme.AppIcons
 
-/** The swipeable top-level pages (Accueil / Abonnements / À regarder plus tard / Vous). */
+/** The swipeable top-level pages (Accueil / Abonnements / Musique / Vous). Each one has its own search. */
 @Serializable data object TabsRoute
-@Serializable data object SearchRoute
 @Serializable data object LoginRoute
 @Serializable data class ChannelRoute(val url: String)
 @Serializable data class PlaylistRoute(val url: String)
 @Serializable data object SettingsRoute
 @Serializable data class VideoListRoute(val kind: String)
+/** [fromMusic]: opened from the Musique tab, so playing it uses the music player page. */
+@Serializable data class LocalPlaylistRoute(val id: String, val fromMusic: Boolean = false)
+/** A music style page, from "Explorer les styles". */
+@Serializable data class MusicGenreRoute(val id: String)
 
 private data class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 
 private val tabs = listOf(
     Tab("Accueil", AppIcons.Home, AppIcons.HomeFilled),
     Tab("Abonnements", AppIcons.Subscriptions, AppIcons.SubscriptionsFilled),
-    Tab("À regarder plus tard", AppIcons.Schedule, AppIcons.ScheduleFilled),
+    Tab("Musique", AppIcons.MusicNote, AppIcons.MusicNoteFilled),
     Tab("Vous", AppIcons.AccountCircle, AppIcons.AccountCircleFilled),
 )
 
@@ -146,7 +164,7 @@ fun SigmaNavHost(
     val repository = container.repository
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
-    val showBottomBar = listOf(SearchRoute::class, LoginRoute::class, SettingsRoute::class).none { destination?.hasRoute(it) == true }
+    val showBottomBar = listOf(LoginRoute::class, SettingsRoute::class).none { destination?.hasRoute(it) == true }
 
     // Activity-scoped (we're outside any NavHost destination here).
     val watch: WatchViewModel = viewModel { WatchViewModel(repository, container.playerManager, container.innerTube, container.account, container.settings, container.history, container.hiddenChannels, container.watchProgress) }
@@ -154,9 +172,58 @@ fun SigmaNavHost(
     val sheet = remember { WatchSheetState() }
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState { tabs.size }
-    val openVideo: (String) -> Unit = { url ->
-        watch.open(url)
+    // The music player page is only for what is started from the Musique tab (and what follows it).
+    val musicTab = tabs.indexOfFirst { it.label == "Musique" }
+    val inMusicContext = (destination?.hasRoute(TabsRoute::class) == true && pagerState.currentPage == musicTab) ||
+        (destination?.hasRoute(LocalPlaylistRoute::class) == true && backStackEntry?.toRoute<LocalPlaylistRoute>()?.fromMusic == true) ||
+        destination?.hasRoute(MusicGenreRoute::class) == true
+    val musicContext by rememberUpdatedState(inMusicContext)
+    /** Opens a video from a page; [music] = started from the Musique tab. */
+    val openVideoAs: (String, Boolean?) -> Unit = { url, music ->
+        watch.open(url, music)
         scope.launch { sheet.expand() }
+    }
+    val openVideo: (String) -> Unit = { url -> openVideoAs(url, false) }
+    /** Plays a list (playlist, chart): the picked video now, the rest in the queue. */
+    val playListAs: (List<VideoItem>, Int, Boolean, Boolean) -> Unit = { videos, start, shuffle, music ->
+        watch.playAll(videos, start, shuffle, music)
+        scope.launch { sheet.expand() }
+    }
+    val openQueue: () -> Unit = {
+        sheet.queueRequests++
+        scope.launch { sheet.expand() }
+    }
+    val context = LocalContext.current
+    // One-shot messages from the player and from the video menus (shown even with no video open).
+    LaunchedEffect(watchState.message) {
+        watchState.message?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            watch.consumeMessage()
+        }
+    }
+    val videoMenu = remember { VideoMenuState() }
+    val videoMenuActions = remember(watch) {
+        // With nothing open, queueing a video starts it in the mini-player instead.
+        fun startedMinimized(started: Boolean) { if (started) sheet.progress = 1f }
+        VideoMenuActions(
+            playNext = { startedMinimized(watch.playNext(it, musicContext)) },
+            playLast = { startedMinimized(watch.playLast(it, musicContext)) },
+            saveToWatchLater = {
+                if (!watch.saveToWatchLater(it)) {
+                    watch.showMessage("Connecte-toi pour enregistrer des vidéos")
+                    navController.navigate(LoginRoute)
+                }
+            },
+            download = { video, audioOnly -> container.downloads.download(video, audioOnly) },
+            notInterested = { video ->
+                videoIdOf(video.url)?.let { container.hiddenChannels.setVideoHidden(it, true) }
+                watch.showMessage("Vidéo masquée. Tu peux l'afficher à nouveau dans les paramètres.")
+            },
+            dontRecommendChannel = { video ->
+                channelIdFromUrl(video.channelUrl)?.let { container.hiddenChannels.setHidden(it, true) }
+                watch.showMessage("La chaîne ${video.channelName ?: ""} ne te sera plus recommandée".replace("  ", " "))
+            },
+        )
     }
 
     LaunchedEffect(pendingVideoUrl) {
@@ -172,6 +239,7 @@ fun SigmaNavHost(
     val imeInset = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     val hiddenChannels by container.hiddenChannels.ids.collectAsStateWithLifecycle()
+    val hiddenVideos by container.hiddenChannels.videos.collectAsStateWithLifecycle()
     val settingsState by container.settings.state.collectAsStateWithLifecycle()
     val watchedFractions by container.watchProgress.fractions.collectAsStateWithLifecycle()
     val cookies by container.account.cookies.collectAsStateWithLifecycle()
@@ -180,7 +248,8 @@ fun SigmaNavHost(
     }
 
     CompositionLocalProvider(
-        LocalHiddenChannels provides hiddenChannels,
+        LocalHiddenChannels provides hiddenChannels + hiddenVideos,
+        LocalVideoMenu provides videoMenu,
         LocalWatchProgress provides watchedFractions,
         LocalSeekMs provides settingsState.seekSeconds * 1000L,
     ) {
@@ -214,21 +283,41 @@ fun SigmaNavHost(
                     .consumeWindowInsets(padding),
             ) {
                 composable<TabsRoute> {
-                    // The top bar slides away while scrolling down and comes back on the way up.
-                    val topBar = remember { CollapsingBarState() }
-                    LaunchedEffect(pagerState.currentPage) { topBar.offset = 0f }
+                    // One search per tab, kept while visiting the other tabs.
+                    val searches = List(tabs.size) { i ->
+                        viewModel(key = "search-$i") { SearchViewModel(repository, container.history) }
+                    }
+                    val onTabs = destination?.hasRoute(TabsRoute::class) == true
+                    // The expanded watch page owns the back button and the keyboard.
+                    val watchCovers = watchState.url != null && !sheet.isMinimized
                     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-                    AppTopBar(
-                        onSearch = { navController.navigate(SearchRoute) },
-                        onSettings = if (pagerState.currentPage == tabs.lastIndex) ({ navController.navigate(SettingsRoute) }) else null,
-                        withStatusBarPadding = false,
-                        modifier = Modifier.collapsing(topBar),
-                    )
                     HorizontalPager(
                         state = pagerState,
                         beyondViewportPageCount = 1,
-                        modifier = Modifier.weight(1f).nestedScroll(topBar.connection),
+                        modifier = Modifier.weight(1f),
                     ) { page ->
+                        val search = searches[page]
+                        val searchState by search.state.collectAsStateWithLifecycle()
+                        if (searchState.active) {
+                            SearchScreen(
+                                viewModel = search,
+                                isCurrent = page == pagerState.currentPage && onTabs && !watchCovers,
+                                onBack = search::close,
+                                onVideoClick = { openVideoAs(it.url, page == musicTab) },
+                                onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                            )
+                            return@HorizontalPager
+                        }
+                        // The top bar slides away while scrolling down and comes back on the way up.
+                        val topBar = remember { CollapsingBarState() }
+                        Column(Modifier.fillMaxSize()) {
+                        AppTopBar(
+                            onSearch = search::open,
+                            onSettings = if (page == tabs.lastIndex) ({ navController.navigate(SettingsRoute) }) else null,
+                            withStatusBarPadding = false,
+                            modifier = Modifier.collapsing(topBar),
+                        )
+                        Box(Modifier.weight(1f).nestedScroll(topBar.connection)) {
                         when (page) {
                             0 -> HomeScreen(
                                 viewModel = viewModel { HomeViewModel(repository, container.innerTube, container.account, container.settings) },
@@ -242,22 +331,31 @@ fun SigmaNavHost(
                                 onVideoClick = { openVideo(it.url) },
                                 onChannelClick = { navController.navigate(ChannelRoute(it)) },
                             )
-                            2 -> WatchLaterScreen(
-                                account = container.account,
-                                innerTube = container.innerTube,
-                                isVisible = pagerState.currentPage == 2 && destination?.hasRoute(TabsRoute::class) == true,
-                                onLogin = { navController.navigate(LoginRoute) },
-                                onVideoClick = { openVideo(it.url) },
+                            2 -> MusicScreen(
+                                viewModel = viewModel { MusicViewModel(container.innerTube, repository, container.musicPrefs, container.history) },
+                                prefs = container.musicPrefs,
+                                history = container.history,
+                                playlists = container.playlists,
+                                onOpenGenre = { navController.navigate(MusicGenreRoute(it.id)) },
+                                onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                                queue = watchState.queue,
+                                onOpenQueue = openQueue,
+                                onOpenPlaylist = { navController.navigate(LocalPlaylistRoute(it, fromMusic = true)) },
+                                onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, true) },
                             )
                             else -> LibraryScreen(
                                 account = container.account,
                                 accountInfo = accountInfo,
                                 history = container.history,
+                                playlists = container.playlists,
                                 onLogin = { navController.navigate(LoginRoute) },
                                 onVideoClick = { openVideo(it.url) },
                                 onOpenHistory = { navController.navigate(VideoListRoute(HISTORY)) },
                                 onOpenPlaylist = { navController.navigate(VideoListRoute(it)) },
+                                onOpenLocalPlaylist = { navController.navigate(LocalPlaylistRoute(it)) },
                             )
+                        }
+                        }
                         }
                     }
                     }
@@ -284,12 +382,22 @@ fun SigmaNavHost(
                 composable<LoginRoute> {
                     LoginScreen(container.account, onDone = { navController.popBackStack() })
                 }
-                composable<SearchRoute> {
-                    SearchScreen(
-                        viewModel = viewModel { SearchViewModel(repository, container.history) },
-                        onBack = navController::popBackStack,
-                        onVideoClick = { openVideo(it.url) },
-                        onChannelClick = { navController.navigate(ChannelRoute(it)) },
+                composable<LocalPlaylistRoute> { entry ->
+                    val route = entry.toRoute<LocalPlaylistRoute>()
+                    LocalPlaylistScreen(
+                        id = route.id,
+                        playlists = container.playlists,
+                        onBack = { navController.popBackStack() },
+                        onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, route.fromMusic) },
+                    )
+                }
+                composable<MusicGenreRoute> { entry ->
+                    val genre = MUSIC_GENRES.firstOrNull { it.id == entry.toRoute<MusicGenreRoute>().id } ?: MUSIC_GENRES.first()
+                    MusicGenreScreen(
+                        genre = genre,
+                        viewModel = viewModel { MusicGenreViewModel(genre.query, repository) },
+                        onBack = { navController.popBackStack() },
+                        onPlay = { v, start, shuffle -> playListAs(v, start, shuffle, true) },
                     )
                 }
                 composable<ChannelRoute> { entry ->
@@ -321,11 +429,12 @@ fun SigmaNavHost(
                 sheet = sheet,
                 // Keyboard open (e.g. typing a search): the mini-player rests above it.
                 bottomInset = maxOf(if (showBottomBar) bottomBarHeight else navBarInset, imeInset),
-                onOpenVideo = openVideo,
+                onOpenVideo = { url -> openVideoAs(url, null) },
                 onChannelClick = { navController.navigate(ChannelRoute(it)) },
                 onLoginRequired = { navController.navigate(LoginRoute) },
             )
         }
+        VideoMenuHost(videoMenu, videoMenuActions, container.playlists)
     }
     }
 }

@@ -2,6 +2,9 @@ package app.sigmatube
 
 import android.app.Application
 import app.sigmatube.data.AppSettings
+import app.sigmatube.data.Downloads
+import app.sigmatube.data.LocalPlaylists
+import app.sigmatube.data.MusicPreferences
 import app.sigmatube.data.HiddenChannels
 import app.sigmatube.data.LocalHistory
 import app.sigmatube.data.WatchProgress
@@ -64,4 +67,7 @@ class AppContainer(app: Application) {
     val settings = AppSettings(app)
     val history = LocalHistory(app, settings)
     val watchProgress = WatchProgress(app)
+    val playlists = LocalPlaylists(app)
+    val musicPrefs = MusicPreferences(app)
+    val downloads = Downloads(app, httpClient, repository)
 }

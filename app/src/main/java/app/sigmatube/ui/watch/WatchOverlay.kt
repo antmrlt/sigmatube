@@ -69,6 +69,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -100,6 +101,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.sigmatube.data.VideoItem
 import app.sigmatube.ui.components.Thumbnail
 import app.sigmatube.ui.components.shareVideo
+import app.sigmatube.ui.components.LocalVideoMenu
+import app.sigmatube.ui.components.shimmer
 import app.sigmatube.data.auth.LikeStatus
 import app.sigmatube.ui.components.userMessage
 import app.sigmatube.ui.theme.Accent
@@ -113,6 +116,9 @@ class WatchSheetState {
         internal set
 
     val isMinimized: Boolean get() = progress >= 0.999f
+
+    /** Bumped to ask the watch page to open its queue panel (e.g. from the Musique tab). */
+    var queueRequests by mutableIntStateOf(0)
 
     suspend fun expand() = animateTo(0f)
     suspend fun minimize() = animateTo(1f)
@@ -139,12 +145,6 @@ fun WatchOverlay(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    LaunchedEffect(state.message) {
-        state.message?.let {
-            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-            viewModel.consumeMessage()
-        }
-    }
     val activity = LocalActivity.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -165,6 +165,15 @@ fun WatchOverlay(
         )
     }
     val details = state.details
+    val queueActions = remember(viewModel) {
+        QueueActions(
+            play = { viewModel.playFromQueue(it.url) },
+            remove = { viewModel.removeFromQueue(it.url) },
+            move = viewModel::moveInQueue,
+            shuffle = viewModel::shuffleQueue,
+            clear = viewModel::clearQueue,
+        )
+    }
 
     var panel by remember { mutableStateOf(WatchPanel.None) }
     var showSettings by remember { mutableStateOf(false) }
@@ -187,7 +196,7 @@ fun WatchOverlay(
         onCaptions = viewModel::toggleCaptions,
         onPrevious = viewModel::previous,
         onNext = viewModel::next,
-        hasNext = related.any { !it.isLive },
+        hasNext = state.queue.isNotEmpty() || related.any { !it.isLive },
         likeStatus = state.likeStatus,
         onLike = { if (!viewModel.toggleRating(LikeStatus.Like)) loginToast("Connecte-toi pour noter les vidéos") },
         onDislike = { if (!viewModel.toggleRating(LikeStatus.Dislike)) loginToast("Connecte-toi pour noter les vidéos") },
@@ -195,7 +204,7 @@ fun WatchOverlay(
         inWatchLater = state.inWatchLater,
         onSave = { if (!viewModel.toggleWatchLater()) loginToast("Connecte-toi pour enregistrer des vidéos") },
         onShare = { details?.let { shareVideo(context, it.title, it.url) } },
-        nextThumbnail = related.firstOrNull()?.thumbnail,
+        nextThumbnail = state.queue.firstOrNull()?.thumbnail ?: related.firstOrNull()?.thumbnail,
         onMoreVideos = { openRecommendationsRequest++ },
     )
 
@@ -208,10 +217,17 @@ fun WatchOverlay(
 
     // A new video: back to the top, panels closed.
     LaunchedEffect(state.url) {
-        panel = WatchPanel.None
+        // The queue panel stays open while going through the queue.
+        if (panel != WatchPanel.Queue || state.queue.isEmpty()) panel = WatchPanel.None
         showRecommendations = false
         floatOffset.snapTo(Offset.Zero)
         listState.scrollToItem(0)
+    }
+    // Only requests made while this page is shown (not one left over from a previous video).
+    val handledQueueRequests = remember { intArrayOf(sheet.queueRequests) }
+    LaunchedEffect(sheet.queueRequests) {
+        if (sheet.queueRequests > handledQueueRequests[0]) panel = WatchPanel.Queue
+        handledQueueRequests[0] = sheet.queueRequests
     }
     LaunchedEffect(openCommentsRequest) {
         if (openCommentsRequest == 0) return@LaunchedEffect
@@ -239,7 +255,13 @@ fun WatchOverlay(
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
-    SystemBarsEffect(darkStatusBar = sheet.progress < 0.5f, immersive = isLandscape)
+    // Started from the Musique tab: music player page (portrait only), video centred, no comments.
+    val musicView = state.musicView && !isLandscape
+    val videoMenu = LocalVideoMenu.current
+    LaunchedEffect(musicView) { if (musicView) panel = WatchPanel.None }
+
+    // The music page is light/dark like the app, the video page has a black band behind the status bar.
+    SystemBarsEffect(darkStatusBar = sheet.progress < 0.5f && !musicView, immersive = isLandscape)
 
     BackHandler(enabled = !sheet.isMinimized) {
         when {
@@ -261,7 +283,12 @@ fun WatchOverlay(
         val p = sheet.progress
 
         // Geometry: expanded video rect -> floating rect in the current corner.
-        val expandedH = w * 9f / 16f
+        // Expanded video rect: full width at the top, or inset under the header on the music page.
+        val musicMarginPx = with(density) { MusicVideoMargin.toPx() }
+        val expandedX = if (musicView) musicMarginPx else 0f
+        val expandedY = if (musicView) statusTop + with(density) { MusicHeaderHeight.toPx() } else statusTop
+        val expandedW = if (musicView) w - 2 * musicMarginPx else w
+        val expandedH = expandedW * 9f / 16f
         // Long press on the floating player toggles a large, full-width version.
         val smallMiniW = minOf(w * 0.5f, with(density) { MiniMaxWidth.toPx() })
         val miniW = lerpF(smallMiniW, w - 2 * margin, largeMiniFraction)
@@ -352,6 +379,43 @@ fun WatchOverlay(
                     }
                     .background(MaterialTheme.colorScheme.background),
             ) {
+                if (musicView && details == null) {
+                    Spacer(Modifier.fillMaxWidth().height(with(density) { statusTop.toDp() }))
+                    MusicPlayerSkeleton(
+                        videoHeight = with(density) { expandedH.toDp() },
+                        error = state.error,
+                        onMinimize = { minimize() },
+                        onRetry = viewModel::retry,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                } else if (musicView && details != null) {
+                    Spacer(Modifier.fillMaxWidth().height(with(density) { statusTop.toDp() }))
+                    MusicPlayerPage(
+                        details = details,
+                        state = state,
+                        ui = ui,
+                        videoHeight = with(density) { expandedH.toDp() },
+                        hasNext = playerActions.hasNext,
+                        actions = MusicPageActions(
+                            minimize = { minimize() },
+                            playPause = { val pl = viewModel.player; if (pl.isPlaying) pl.pause() else { if (pl.playbackState == androidx.media3.common.Player.STATE_ENDED) pl.seekTo(0); pl.play() } },
+                            seekTo = { viewModel.player.seekTo(it) },
+                            previous = viewModel::previous,
+                            next = viewModel::next,
+                            toggleLoop = { viewModel.setLoop(!state.loop) },
+                            shuffle = viewModel::shuffleQueue,
+                            like = playerActions.onLike,
+                            saveToPlaylist = { viewModel.currentItem()?.let { videoMenu?.saveToPlaylist(it) } },
+                            share = playerActions.onShare,
+                            more = { viewModel.currentItem()?.let { videoMenu?.open(it) } },
+                            showVideoPage = { viewModel.setMusicView(false) },
+                            channel = { url -> minimize(); onChannelClick(url) },
+                            openVideo = { onOpenVideo(it.url) },
+                            queue = queueActions,
+                        ),
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                } else {
                 Spacer(Modifier.fillMaxWidth().height(with(density) { (statusTop + expandedH).toDp() }).background(Color.Black))
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
@@ -373,6 +437,8 @@ fun WatchOverlay(
                                     onLoginRequired()
                                 }
                             },
+                            queue = state.queue,
+                            queueActions = queueActions,
                             inWatchLater = state.inWatchLater,
                             onToggleWatchLater = {
                                 if (!viewModel.toggleWatchLater()) {
@@ -391,13 +457,14 @@ fun WatchOverlay(
                         else -> CircularProgressIndicator(Modifier.align(Alignment.Center), strokeWidth = 3.dp)
                     }
                 }
+                }
             }
         }
 
         // The video itself, interpolated between its expanded slot and the floating corner.
-        val x = lerpF(0f, target.x, p)
-        val y = lerpF(statusTop, target.y, p)
-        val vw = lerpF(w, miniW, p)
+        val x = lerpF(expandedX, target.x, p)
+        val y = lerpF(expandedY, target.y, p)
+        val vw = lerpF(expandedW, miniW, p)
         val vh = lerpF(expandedH, miniH, p)
         val minimized = sheet.isMinimized
 
@@ -458,18 +525,19 @@ fun WatchOverlay(
                 )
             }
 
-        val radius = lerp(0.dp, 12.dp, p)
+        val radius = lerp(if (musicView) 16.dp else 0.dp, 12.dp, p)
         Box(
             Modifier
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .size(with(density) { vw.toDp() }, with(density) { vh.toDp() })
-                .shadow(lerp(0.dp, 8.dp, p), RoundedCornerShape(radius))
-                // Expanded: no clip, so the seek bar thumb can overhang the bottom edge like YouTube.
-                .then(if (p > 0f) Modifier.clip(RoundedCornerShape(radius)) else Modifier)
+                .shadow(lerp(if (musicView) 12.dp else 0.dp, 8.dp, p), RoundedCornerShape(radius))
+                // Expanded video page: no clip, so the seek bar thumb can overhang the bottom edge like YouTube.
+                .then(if (p > 0f || musicView) Modifier.clip(RoundedCornerShape(radius)) else Modifier)
                 .background(Color.Black)
                 .then(if (minimized) floatingGestures else expandedDrag),
         ) {
-            PlayerSlot(viewModel, state, ui, interactive = p == 0f, isFullscreen = false,
+            // Music page: just the picture, its controls are under it.
+            PlayerSlot(viewModel, state, ui, interactive = p == 0f && !musicView, isFullscreen = false, music = musicView,
                 onToggleFullscreen = { setFullscreen(true) }, onMinimize = { minimize() },
                 onSettings = { showSettings = true }, actions = playerActions, modifier = Modifier.fillMaxSize())
         }
@@ -504,9 +572,12 @@ private fun PlayerSlot(
     onSettings: () -> Unit,
     modifier: Modifier,
     actions: PlayerActions? = null,
+    music: Boolean = false,
 ) {
     val details = state.details
     when {
+        // Music page loading: a shimmering cover instead of the black video box.
+        details == null && music -> Box(modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh).shimmer())
         details == null -> Box(modifier.background(Color.Black)) {
             if (state.isLoading) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center).size(36.dp), color = Color.White, strokeWidth = 3.dp)

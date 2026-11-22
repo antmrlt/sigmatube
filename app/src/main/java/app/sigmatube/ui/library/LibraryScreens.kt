@@ -22,6 +22,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.sigmatube.data.LocalHistory
+import app.sigmatube.data.LocalPlaylists
+import app.sigmatube.ui.components.PlaylistNameDialog
+import app.sigmatube.ui.playlist.LocalPlaylistTile
 import app.sigmatube.ui.components.MessageState
 import app.sigmatube.ui.components.VideoRow
 import androidx.compose.foundation.layout.Arrangement
@@ -273,13 +276,17 @@ fun LibraryScreen(
     account: AccountManager,
     accountInfo: AccountInfo?,
     history: LocalHistory,
+    playlists: LocalPlaylists,
     onLogin: () -> Unit,
     onVideoClick: (VideoItem) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenPlaylist: (String) -> Unit,
+    onOpenLocalPlaylist: (String) -> Unit,
 ) {
     val cookies by account.cookies.collectAsStateWithLifecycle()
     val watched by history.watched.collectAsStateWithLifecycle()
+    val mine by playlists.playlists.collectAsStateWithLifecycle()
+    var creating by remember { mutableStateOf(false) }
     val loggedIn = cookies != null
 
     LazyColumn(Modifier.fillMaxSize()) {
@@ -354,6 +361,41 @@ fun LibraryScreen(
             }
         }
 
+        item(key = "playlists-title") {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 24.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Playlists", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(
+                    "Nouvelle",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                        .clickable { creating = true }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+        item(key = "playlists") {
+            if (mine.isEmpty()) {
+                Text(
+                    "Crée une playlist, ou utilise « Enregistrer dans une playlist » dans le menu ⋮ d'une vidéo.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            } else {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(mine, key = { it.id }) { p -> LocalPlaylistTile(p, onClick = { onOpenLocalPlaylist(p.id) }) }
+                }
+            }
+        }
+
         if (loggedIn) {
             item(key = "library-title") {
                 Text(
@@ -366,6 +408,13 @@ fun LibraryScreen(
             item(key = "later") { LibraryRow(Icons.Outlined.WatchLater, "À regarder plus tard") { onOpenPlaylist(WATCH_LATER) } }
         }
         item(key = "bottom") { Spacer(Modifier.height(24.dp)) }
+    }
+
+    if (creating) {
+        PlaylistNameDialog("Nouvelle playlist", "Créer", onDismiss = { creating = false }) { name ->
+            creating = false
+            onOpenLocalPlaylist(playlists.create(name))
+        }
     }
 }
 
@@ -506,56 +555,6 @@ fun VideoListScreen(
             confirmButton = { TextButton(onClick = { history.clearWatched(); confirmClear = false }) { Text("Effacer") } },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Annuler") } },
         )
-    }
-}
-
-// endregion
-
-// region "À regarder plus tard" tab
-
-@Composable
-fun WatchLaterScreen(
-    account: AccountManager,
-    innerTube: InnerTubeClient,
-    /** True while this tab is the one on screen: refreshes so newly saved videos show up. */
-    isVisible: Boolean,
-    onLogin: () -> Unit,
-    onVideoClick: (VideoItem) -> Unit,
-) {
-    val cookies by account.cookies.collectAsStateWithLifecycle()
-    if (cookies == null) {
-        SignInPrompt(
-            title = "À regarder plus tard",
-            message = "Connecte-toi pour retrouver les vidéos que tu as enregistrées pour plus tard.",
-            onLogin = onLogin,
-        )
-        return
-    }
-    val vm: AccountPlaylistViewModel = viewModel(key = "tab-$WATCH_LATER") { AccountPlaylistViewModel(WATCH_LATER, innerTube) }
-    val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(cookies, isVisible) { if (isVisible) vm.refresh() }
-    val listState = rememberLazyListState()
-    LoadMoreEffect(listState, onLoadMore = vm::loadMore)
-
-    PullToRefreshBox(
-        isRefreshing = state.isRefreshing,
-        onRefresh = { vm.refresh(pull = true) },
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        when {
-            state.isLoading -> SkeletonFeed(rows = true)
-            state.error != null && state.videos.isEmpty() -> ErrorState(state.error!!, onRetry = vm::load)
-            state.videos.isEmpty() -> MessageState(
-                "Aucune vidéo enregistrée",
-                "Appuie sur « Enregistrer » sous une vidéo pour la regarder plus tard.",
-                icon = Icons.Outlined.WatchLater,
-            )
-            else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                item(key = "title") { SectionTitle("À regarder plus tard") }
-                items(state.videos, key = { it.url }) { VideoRow(it, onClick = { onVideoClick(it) }, modifier = Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = spring(stiffness = Spring.StiffnessMediumLow), fadeOutSpec = tween(120))) }
-                if (state.isLoadingMore) item(key = "more") { ListFooterLoader() }
-            }
-        }
     }
 }
 

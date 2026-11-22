@@ -64,6 +64,13 @@ data class WatchState(
     val inWatchLater: Boolean = false,
     /** One-shot message to show (toast), consumed by the UI. */
     val message: String? = null,
+    /** "File d'attente": videos to play after this one, before the suggestions. */
+    val queue: List<VideoItem> = emptyList(),
+    /**
+     * Music player page instead of the classic video page. Set when playback starts from the
+     * Musique tab, then kept for what follows (queue, next, suggestions) until changed.
+     */
+    val musicView: Boolean = false,
 )
 
 /**
@@ -97,7 +104,8 @@ class WatchViewModel(
         override fun onPlaybackStateChanged(playbackState: Int) {
             val s = _state.value
             if (playbackState == Player.STATE_ENDED) s.details?.url?.let { watchProgress.save(it, player.duration, player.duration) }
-            if (playbackState == Player.STATE_ENDED && !s.loop && settings.state.value.autoplay &&
+            // A queued video always follows; otherwise only with autoplay on.
+            if (playbackState == Player.STATE_ENDED && !s.loop && (s.queue.isNotEmpty() || settings.state.value.autoplay) &&
                 playerManager.currentUrl == s.details?.url
             ) {
                 next()
@@ -127,6 +135,11 @@ class WatchViewModel(
             loadLikeStatus(url)
         }
         player.addListener(autoplayListener)
+        // Next / previous from the notification and the lock screen.
+        playerManager.skipHandler = object : PlayerManager.SkipHandler {
+            override fun next() = this@WatchViewModel.next()
+            override fun previous() = this@WatchViewModel.previous()
+        }
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { if (!isPlaying) saveProgress() }
         })
@@ -151,9 +164,11 @@ class WatchViewModel(
         }
     }
 
-    fun open(url: String) = open(url, pushHistory = true)
+    /** [music]: show the music player page (true) or the video page (false); null keeps the current one. */
+    fun open(url: String, music: Boolean? = null) = open(url, pushHistory = true, music = music)
 
-    private fun open(url: String, pushHistory: Boolean) {
+    private fun open(url: String, pushHistory: Boolean, music: Boolean? = null) {
+        if (music != null) _state.update { it.copy(musicView = music) }
         val current = _state.value.url
         if (url == current && _state.value.error == null) return
         if (pushHistory && current != null) backStack.addLast(current)
@@ -168,6 +183,8 @@ class WatchViewModel(
                 speed = settings.state.value.defaultSpeed,
                 loop = it.loop,
                 hasPrevious = backStack.isNotEmpty(),
+                queue = it.queue.filterNot { q -> q.url == url },
+                musicView = it.musicView,
             )
         }
         load(url, startPositionMs = watchProgress.resumePosition(url))
@@ -175,11 +192,90 @@ class WatchViewModel(
         loadLikeStatus(url)
     }
 
-    /** Next = first suggested video (skipping hidden channels), like YouTube's autoplay. */
+    /** Next = the queue first, then the first suggested video (skipping hidden ones), like YouTube's autoplay. */
     fun next() {
-        val related = _state.value.details?.related.orEmpty().withoutHidden(hiddenChannels.ids.value)
+        _state.value.queue.firstOrNull()?.let { return open(it.url) }
+        val related = _state.value.details?.related.orEmpty().withoutHidden(hiddenChannels.all())
         related.firstOrNull { !it.isLive }?.let { open(it.url) }
     }
+
+    // region Queue ("File d'attente")
+
+    /** "Lire ensuite". With nothing open, plays the video right away; returns true in that case. */
+    fun playNext(video: VideoItem, music: Boolean = false): Boolean {
+        val current = _state.value.url
+        if (current == null) { open(video.url, music); return true }
+        if (video.url == current) {
+            _state.update { it.copy(message = "Cette vidéo est déjà en cours de lecture") }
+            return false
+        }
+        _state.update { it.copy(queue = listOf(video) + it.queue.filterNot { q -> q.url == video.url }, message = "Lecture ensuite") }
+        return false
+    }
+
+    /** "Lire en dernier". With nothing open, plays the video right away; returns true in that case. */
+    fun playLast(video: VideoItem, music: Boolean = false): Boolean {
+        val current = _state.value.url
+        if (current == null) { open(video.url, music); return true }
+        if (video.url == current) {
+            _state.update { it.copy(message = "Cette vidéo est déjà en cours de lecture") }
+            return false
+        }
+        _state.update { it.copy(queue = it.queue.filterNot { q -> q.url == video.url } + video, message = "Ajoutée à la fin de la file d'attente") }
+        return false
+    }
+
+    /** Plays a whole list (a playlist, a chart…): the picked video now, the rest queued after it. */
+    fun playAll(videos: List<VideoItem>, start: Int = 0, shuffle: Boolean = false, music: Boolean? = null) {
+        if (videos.isEmpty()) return
+        val ordered = if (shuffle) videos.shuffled() else videos.drop(start.coerceIn(0, videos.lastIndex))
+        val first = ordered.first()
+        _state.update { it.copy(queue = ordered.drop(1).filterNot { v -> v.isLive }, musicView = music ?: it.musicView) }
+        if (_state.value.url != first.url) open(first.url)
+    }
+
+    fun playFromQueue(url: String) {
+        if (_state.value.queue.none { it.url == url }) return
+        open(url)
+    }
+
+    fun removeFromQueue(url: String) = _state.update { it.copy(queue = it.queue.filterNot { q -> q.url == url }) }
+
+    fun moveInQueue(from: Int, to: Int) = _state.update {
+        if (from !in it.queue.indices || to !in it.queue.indices) it
+        else it.copy(queue = it.queue.toMutableList().apply { add(to, removeAt(from)) })
+    }
+
+    fun shuffleQueue() = _state.update { it.copy(queue = it.queue.shuffled()) }
+
+    fun clearQueue() = _state.update { it.copy(queue = emptyList()) }
+
+    // endregion
+
+    /** "Enregistrer dans À regarder plus tard" from a video's menu. Returns false when the user must sign in first. */
+    fun saveToWatchLater(video: VideoItem): Boolean {
+        if (!account.isLoggedIn) return false
+        val s = _state.value
+        if (video.url == s.url) {
+            if (s.inWatchLater) _state.update { it.copy(message = "Déjà dans « À regarder plus tard »") } else toggleWatchLater()
+            return true
+        }
+        val id = videoId(video.url) ?: return true
+        viewModelScope.launch {
+            runCatching { innerTube.addToWatchLater(id) }
+                .onSuccess { _state.update { it.copy(message = "Ajoutée à « À regarder plus tard »") } }
+                .onFailure { e -> _state.update { it.copy(message = e.message ?: "Action impossible") } }
+        }
+        return true
+    }
+
+    fun setMusicView(enabled: Boolean) = _state.update { it.copy(musicView = enabled) }
+
+    /** The video being watched, as a list item (for its ⋮ menu). */
+    fun currentItem(): VideoItem? = _state.value.details?.toItem()
+
+    /** Shows a one-shot toast through the same channel as the player's own messages. */
+    fun showMessage(text: String) = _state.update { it.copy(message = text) }
 
     /** Restart if we're past the first seconds, otherwise go back to the previous video. */
     fun previous() {
@@ -290,6 +386,7 @@ class WatchViewModel(
             runCatching { repository.video(url) }
                 .onSuccess { details ->
                     history.addWatched(details.toItem())
+                    if (_state.value.musicView) history.addMusic(details.toItem())
                     _state.update { it.copy(details = details, isLoading = false, error = null) }
                     startPlayback(details, startPositionMs)
                 }
@@ -532,6 +629,7 @@ class WatchViewModel(
     override fun onCleared() {
         saveProgress()
         player.removeListener(autoplayListener)
+        playerManager.skipHandler = null
         // App closed while music plays in the background: let it continue (the service owns it).
         if (!(player.playWhenReady && canPlayInBackground())) playerManager.stop(this)
     }

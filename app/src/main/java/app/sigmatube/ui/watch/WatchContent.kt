@@ -84,7 +84,16 @@ import app.sigmatube.ui.components.shareVideo
 import app.sigmatube.ui.theme.Accent
 import app.sigmatube.util.Format
 
-enum class WatchPanel { None, Description, Comments }
+enum class WatchPanel { None, Description, Comments, Queue }
+
+/** What the queue panel can do with the "File d'attente". */
+class QueueActions(
+    val play: (VideoItem) -> Unit,
+    val remove: (VideoItem) -> Unit,
+    val move: (Int, Int) -> Unit,
+    val shuffle: () -> Unit,
+    val clear: () -> Unit,
+)
 
 /** Everything below the player: details list, with description/comments panels sliding over it. */
 @Composable
@@ -102,12 +111,16 @@ fun WatchContent(
     onRate: (LikeStatus) -> Unit,
     inWatchLater: Boolean,
     onToggleWatchLater: () -> Unit,
+    queue: List<VideoItem>,
+    queueActions: QueueActions,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier) {
         Details(
             details = details,
             comments = comments,
+            queue = queue,
+            onOpenQueue = { onPanelChange(WatchPanel.Queue) },
             likeStatus = likeStatus,
             likeDelta = likeDelta,
             onRate = onRate,
@@ -129,12 +142,28 @@ fun WatchContent(
             exit = slideOutVertically { it },
         ) {
             Panel(
-                title = if (lastPanel == WatchPanel.Comments) "Commentaires" else "Description",
-                subtitle = if (lastPanel == WatchPanel.Comments) comments.countText else null,
+                title = when (lastPanel) {
+                    WatchPanel.Comments -> "Commentaires"
+                    WatchPanel.Queue -> "File d'attente"
+                    else -> "Description"
+                },
+                subtitle = when (lastPanel) {
+                    WatchPanel.Comments -> comments.countText
+                    WatchPanel.Queue -> queue.size.takeIf { it > 0 }?.toString()
+                    else -> null
+                },
                 onClose = { onPanelChange(WatchPanel.None) },
             ) {
                 when (lastPanel) {
                     WatchPanel.Comments -> CommentsList(comments, commentActions, details.channelAvatar)
+                    WatchPanel.Queue -> QueueContent(
+                        queue = queue,
+                        onPlay = queueActions.play,
+                        onRemove = queueActions.remove,
+                        onMove = queueActions.move,
+                        onShuffle = queueActions.shuffle,
+                        onClear = { queueActions.clear(); onPanelChange(WatchPanel.None) },
+                    )
                     else -> DescriptionContent(details, onChannelClick)
                 }
             }
@@ -208,6 +237,8 @@ private fun Panel(
 private fun Details(
     details: VideoDetails,
     comments: CommentsState,
+    queue: List<VideoItem>,
+    onOpenQueue: () -> Unit,
     likeStatus: LikeStatus,
     likeDelta: Long,
     onRate: (LikeStatus) -> Unit,
@@ -302,6 +333,10 @@ private fun Details(
                     Text(if (inWatchLater) "Enregistrée" else "Enregistrer", style = MaterialTheme.typography.labelLarge)
                 }
             }
+        }
+
+        if (queue.isNotEmpty()) {
+            item(key = "queue") { QueueTeaser(queue, onOpenQueue) }
         }
 
         if (!comments.disabled && (comments.isLoading || comments.comments.isNotEmpty())) {
