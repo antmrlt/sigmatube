@@ -1,5 +1,6 @@
 package app.sigmatube.ui.music
 
+import app.sigmatube.ui.components.TabReselectEffect
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -266,8 +267,10 @@ fun MusicScreen(
             .take(16)
     }
 
+    val listState = rememberLazyListState()
+    TabReselectEffect(listState, onRefresh = viewModel::refresh)
     PullToRefreshBox(isRefreshing = state.isRefreshing, onRefresh = viewModel::refresh, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), state = rememberLazyListState(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
             // Mood picker, and what it found right under it.
             item(key = "moods") {
                 LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -93,6 +93,10 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import app.sigmatube.ui.components.LocalTabReselect
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.produceState
@@ -175,6 +179,8 @@ fun SigmaNavHost(
     val sheet = remember { WatchSheetState() }
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState { tabs.size }
+    // Tapping the icon of the tab already shown: scroll to top, or refresh when already there.
+    val tabReselect = remember { MutableSharedFlow<Int>(extraBufferCapacity = 1) }
     // The music player page is only for what is started from the Musique tab (and what follows it).
     val musicTab = tabs.indexOfFirst { it.label == "Musique" }
     val inMusicContext = (destination?.hasRoute(TabsRoute::class) == true && pagerState.currentPage == musicTab) ||
@@ -283,9 +289,14 @@ fun SigmaNavHost(
                         avatar = accountInfo?.avatar,
                         modifier = Modifier.onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } },
                     ) { index ->
-                        // From a channel page: come back to the tabs first.
-                        if (destination?.hasRoute(TabsRoute::class) != true) navController.popBackStack(TabsRoute, inclusive = false)
-                        scope.launch { pagerState.animateScrollToPage(index) }
+                        val onTabs = destination?.hasRoute(TabsRoute::class) == true
+                        if (onTabs && index == pagerState.currentPage && !pagerState.isScrollInProgress) {
+                            tabReselect.tryEmit(index)
+                        } else {
+                            // From a channel page: come back to the tabs first.
+                            if (!onTabs) navController.popBackStack(TabsRoute, inclusive = false)
+                            scope.launch { pagerState.animateScrollToPage(index) }
+                        }
                     }
                 }
             },
@@ -334,6 +345,9 @@ fun SigmaNavHost(
                         }
                         // The top bar slides away while scrolling down and comes back on the way up.
                         val topBar = remember { CollapsingBarState() }
+                        val reselect = remember(page) { tabReselect.filter { it == page }.map { } }
+                        // Back to the top: the top bar comes back too.
+                        LaunchedEffect(reselect) { reselect.collect { topBar.offset = 0f } }
                         Column(Modifier.fillMaxSize()) {
                         AppTopBar(
                             onSearch = search::open,
@@ -342,6 +356,7 @@ fun SigmaNavHost(
                             modifier = Modifier.collapsing(topBar),
                         )
                         Box(Modifier.weight(1f).nestedScroll(topBar.connection)) {
+                        CompositionLocalProvider(LocalTabReselect provides reselect) {
                         when (page) {
                             0 -> HomeScreen(
                                 viewModel = viewModel { HomeViewModel(repository, container.innerTube, container.account, container.settings) },
@@ -381,6 +396,7 @@ fun SigmaNavHost(
                                 onOpenPlaylist = { navController.navigate(VideoListRoute(it)) },
                                 onOpenLocalPlaylist = { navController.navigate(LocalPlaylistRoute(it)) },
                             )
+                        }
                         }
                         }
                         }

@@ -1,5 +1,6 @@
 package app.sigmatube.ui.library
 
+import app.sigmatube.ui.components.TabReselectEffect
 import app.sigmatube.ui.components.SkeletonFeed
 import app.sigmatube.ui.components.Motion
 import androidx.compose.animation.core.Spring
@@ -170,6 +171,7 @@ fun SubscriptionsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     LoadMoreEffect(listState, onLoadMore = viewModel::loadMore)
+    TabReselectEffect(listState, onRefresh = { viewModel.load(refreshing = true) })
 
     PullToRefreshBox(
         isRefreshing = state.isRefreshing,
@@ -288,8 +290,10 @@ fun LibraryScreen(
     val mine by playlists.playlists.collectAsStateWithLifecycle()
     var creating by remember { mutableStateOf(false) }
     val loggedIn = cookies != null
+    val listState = rememberLazyListState()
+    TabReselectEffect(listState)
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState) {
         item(key = "profile") {
             if (loggedIn) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {

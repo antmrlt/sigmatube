@@ -1,5 +1,6 @@
 package app.sigmatube.ui.home
 
+import app.sigmatube.ui.components.TabReselectEffect
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -183,6 +184,7 @@ fun HomeScreen(
     ) {
         val listState = rememberLazyListState()
         LoadMoreEffect(listState, onLoadMore = viewModel::loadMore)
+        TabReselectEffect(listState, onRefresh = viewModel::refresh)
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
             item(key = "chips") {
                 CategoryChips(state.categories, state.selected, viewModel::select)

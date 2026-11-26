@@ -335,9 +335,8 @@ fun WatchOverlay(
                 when {
                     isLandscape -> {
                         if (upDrag < -thresholdPx) showRecommendations = true
-                        else if (upDrag > thresholdPx) {
-                            if (showRecommendations) showRecommendations = false else setFullscreen(false)
-                        }
+                        // Swiping down only closes the shelf: it never leaves fullscreen.
+                        else if (upDrag > thresholdPx) showRecommendations = false
                     }
                     upDrag < 0 -> if (upDrag < -thresholdPx) setFullscreen(true)
                     else -> {
